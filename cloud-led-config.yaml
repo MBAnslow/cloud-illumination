@@ -6,7 +6,7 @@ ellipsoid:
   rz: 1
 cloud:
   opacity: 0.6
-  showOpacity: true
+  showOpacity: false
   rotationXDeg: 0
   rotationYDeg: 29
   offsetX: 0.01
@@ -16,8 +16,8 @@ cloud:
 cloudTop:
   id: null
   name: ""
-  visible: true
-  scale: 1
+  visible: false
+  scale: 1.9
   yawDeg: 0
   tiltDeg: 0
   offsetX: 0
@@ -31,7 +31,7 @@ strand:
   ledSize: 0.005
   sensorHemisphereFocus: 12
   colorProfile:
-    brightnessGamma: 1.1
+    brightnessGamma: 1.3
 ambient:
   color: "#262830"
   intensity: 0.25
@@ -47,13 +47,13 @@ directional:
 sky:
   enabled: true
   visualizationAmount: 1
-  autoPlay: true
-  timeHours: 6.515397176116603
+  autoPlay: false
+  timeHours: 19.504316570996714
   cycleSeconds: 180
   ambientScale: 1
   sunScale: 1
   moonScale: 1
-  sunSpread: 0.9
+  sunSpread: 1
   moonSpread: 0.9
   sunBeamFocus: 0.65
   sunTopHighlightBoost: 0
@@ -62,7 +62,7 @@ sky:
   showSpreadCones: false
   orbitRadius: 12
   orbitRadiusX: 12
-  orbitRadiusY: 12
+  orbitRadiusY: 2.5
   orbitRadiusZ: 12
   sunHorizonStartDeg: -8
   sunHorizonFullDeg: 3
@@ -78,7 +78,7 @@ sky:
       swatchId: azureTwilight
       color: "#6f82ca"
     - id: sun-2-roseDawn
-      timeHours: 8.29342543796895
+      timeHours: 8.295417881093103
       swatchId: roseDawn
       color: "#f39d84"
     - id: sun-3-goldenPeach
@@ -90,17 +90,29 @@ sky:
       swatchId: noonSky
       color: "#fff8ea"
     - id: sun-5-warmDay
-      timeHours: 14.666540596445554
+      timeHours: 13.660373494703217
       swatchId: warmDay
       color: "#ffe5be"
     - id: sun-6-emberSunset
-      timeHours: 16.35366699251483
+      timeHours: 15.5588656214845
       swatchId: emberSunset
       color: "#ef708a"
     - id: sun-7-crimsonSunset
-      timeHours: 19
-      swatchId: crimsonSunset
-      color: "#ff4a1f"
+      timeHours: 16.768237908515044
+      swatchId: custom
+      color: "#ff3300"
+    - id: sun-30vgqg-mv8f7g8t
+      timeHours: 23.45340954911886
+      swatchId: custom
+      color: "#000000"
+    - id: sun-knv9z3-mv8f7jeu
+      timeHours: 0.852746313029691
+      swatchId: custom
+      color: "#000000"
+    - id: sun-jsf1lj-mv8fdmnr
+      timeHours: 14.908357955381145
+      swatchId: roseDawn
+      color: "#f39d84"
   moonStops:
     - id: moon-0-moonlitBlue
       timeHours: 0
@@ -112,20 +124,28 @@ sky:
       color: "#aebfff"
     - id: moon-2-roseDawn
       timeHours: 7
-      swatchId: roseDawn
-      color: "#95a9ea"
+      swatchId: custom
+      color: "#000000"
     - id: moon-3-emberSunset
-      timeHours: 18.5
+      timeHours: 22.08509539813676
       swatchId: emberSunset
       color: "#98a6df"
     - id: moon-4-violetDusk
-      timeHours: 20.5
+      timeHours: 22.70315965993058
       swatchId: violetDusk
       color: "#a4b4f0"
     - id: moon-5-blueHour
-      timeHours: 22
+      timeHours: 23.543211568843844
       swatchId: blueHour
       color: "#aebfff"
+    - id: moon-665f2e-mv8f754h
+      timeHours: 12.275021853839256
+      swatchId: custom
+      color: "#000000"
+    - id: moon-158iz7-mv8f78jn
+      timeHours: 15.519134157725855
+      swatchId: custom
+      color: "#000000"
   ambientStops:
     - id: ambient-0-moonlitBlue
       timeHours: 0
@@ -184,15 +204,15 @@ lightning:
         t: 1
         color: "#fff6d6"
   intensityRange:
-    - 0.9
-    - 1.5
+    - 0.5
+    - 2.45
   keyframes:
     - id: kf-0
-      t: 0
+      t: 0.14
       values:
         intensityRange:
           - 0.5
-          - 0.9
+          - 2.45
         strikesPerMinute: 2
         strikePerMinute: 0.3
         spritesPerMinute: 0.5
@@ -208,7 +228,7 @@ lightning:
         thunderDelayMs: 800
         pan: 0
     - id: kf-1
-      t: 0.5
+      t: 0.63
       values:
         intensityRange:
           - 0.9
@@ -248,20 +268,20 @@ lightning:
         thunderDelayMs: 800
         pan: 0
   strikesPerMinute: 2
-  strikePerMinute: 0.5
-  spritesPerMinute: 1
-  falloffDistance: 0.1
+  strikePerMinute: 0.3
+  spritesPerMinute: 0.5
+  falloffDistance: 0.19453942669774885
   boltSegments: 10
   boltJitterRange:
     - 0.25
     - 0.55
   travelSpeedRange:
-    - 0.5
-    - 2
-  subFlashes: 0.4
-  spanScale: 0.85
-  minSpanScale: 0.5
-  activeStartHour: 20
+    - 0.1
+    - 0.6
+  subFlashes: 0.25
+  spanScale: 0.7
+  minSpanScale: 0.4
+  activeStartHour: 17.84872587471541
   activeEndHour: 4
   boltSamples: []
   strikeSample: null
@@ -271,11 +291,11 @@ lightning:
   spriteDurationMs: 180
   spriteStrobeHz: 18
   spriteStrobeDuty: 0.45
-  boltGain: 0.8
-  spriteGain: 1.4
+  boltGain: 0.6
+  spriteGain: 1.2
   spriteAudioGain: 1
   spriteAudioReactiveBrightness: true
-  backgroundGain: 0.35
+  backgroundGain: 0.25
   boltPitchJitterCents: 200
   thunderDelayMs: 800
   pan: 0
@@ -5467,10 +5487,10 @@ mapping:
   useBakedSurface: false
   bakedSurfaceSignature: null
   bakeSurfaceRequestNonce: 0
-  mappingLightAngleDeg: 360
-  mappingLightElevationDeg: 108
+  mappingLightAngleDeg: 0
+  mappingLightElevationDeg: 45
   mappingLightRadius: 0.25
-  mappingLightIntensity: 1.2
+  mappingLightIntensity: 0.1
   mappingLightSpread: 0.9
   mappingLightFocus: 1
   mappingLightDecay: 1
@@ -5485,6 +5505,6 @@ mesh:
   offsetY: -0.01
 ui:
   showLightning: true
-  showTimeOfDay: true
+  showTimeOfDay: false
   showCloud: true
   showStream: true
