@@ -39,6 +39,48 @@ export const DEFAULT_ARCH_PLACEMENTS: [ArchPlacement, ArchPlacement] = [
   { x: 0, y: 0.03, z: 0 },
 ];
 
+/** Axis-aligned box around both arches, in layout metres before flips. */
+export interface ArchBounds {
+  center: Vec3;
+  /** Half-size along x, y, z. */
+  half: Vec3;
+}
+
+/** Bounding box of the generated arches, from the LED positions. */
+export function archLayoutBounds(
+  pitch: number,
+  placements: readonly [ArchPlacement, ArchPlacement] = DEFAULT_ARCH_PLACEMENTS,
+): ArchBounds {
+  const leds = buildDual32x8Slotted(pitch, placements);
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  for (const led of leds) {
+    const p = led.pos;
+    if (!p) continue;
+    if (p[0] < minX) minX = p[0];
+    if (p[1] < minY) minY = p[1];
+    if (p[2] < minZ) minZ = p[2];
+    if (p[0] > maxX) maxX = p[0];
+    if (p[1] > maxY) maxY = p[1];
+    if (p[2] > maxZ) maxZ = p[2];
+  }
+  if (!Number.isFinite(minX)) {
+    return { center: [0, 0, 0], half: [0.05, 0.05, 0.05] };
+  }
+  return {
+    center: [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2],
+    half: [
+      Math.max(1e-4, (maxX - minX) / 2),
+      Math.max(1e-4, (maxY - minY) / 2),
+      Math.max(1e-4, (maxZ - minZ) / 2),
+    ],
+  };
+}
+
 export function resolveArchPlacements(
   saved: unknown,
 ): [ArchPlacement, ArchPlacement] {

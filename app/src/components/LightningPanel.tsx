@@ -19,6 +19,7 @@ import { putSampleBlob, deleteSampleBlob } from "../state/blobStorage";
 import { invalidateSpriteImage } from "../lighting/spriteImageCache";
 import {
   isRangePlotChannel,
+  LIGHTNING_REFERENCE_RADIUS,
   plotChannelMax,
   sampleLightningKeyframe,
   samplePlotChannel,
@@ -27,6 +28,7 @@ import {
   interpolateLightningColorStops,
   type LightningPlotChannel,
 } from "../lighting/lightning";
+import { archLayoutBounds, DUAL_32X8_SLOTTED } from "../mapping/ledLayout";
 
 /** Suffix for params that ride the flash keyframe envelope. */
 const KF = "*";
@@ -54,7 +56,8 @@ const LIGHTNING_TOOLTIPS: Record<string, string> = {
   "Sprite duration": "Total lifetime of each sprite, including its strobe off-phases.",
   "Sprite strobe": "How many times per second an active sprite flashes.",
   "Strobe duty": "Fraction of each strobe cycle for which the sprite is visible.",
-  "Light falloff": "Distance over which LEDs near a bolt path receive its glow.",
+  "Light falloff":
+    "Distance over which LEDs near a bolt receive its glow, scaled to the LED arches.",
   Segments: "Number of line segments used to draw each jagged bolt.",
   Jitter: "Range of sideways randomness applied to the bolt path.",
   "Travel (m/s)": "Range of propagation speeds sampled per bolt; slower bolts remain visible longer.",
@@ -82,6 +85,18 @@ function lightningTooltip(label: string): string | undefined {
  */
 export function LightningPanel({ visible = true }: { visible?: boolean }) {
   const lightning = useSimStore((s) => s.lightning);
+  const ledLayout = useSimStore((s) => s.mapping.layout);
+  const layoutPitch = useSimStore((s) => s.mapping.layoutPitch);
+  const archPlacements = useSimStore((s) => s.mapping.archPlacements);
+  const meshScale = useSimStore((s) => s.mesh.scale);
+  const falloffFit = useMemo(() => {
+    if (ledLayout !== DUAL_32X8_SLOTTED) return 1;
+    const bounds = archLayoutBounds(layoutPitch, archPlacements);
+    const absScale = Math.abs(meshScale);
+    const mean =
+      ((bounds.half[0] + bounds.half[1] + bounds.half[2]) / 3) * absScale;
+    return mean / LIGHTNING_REFERENCE_RADIUS;
+  }, [ledLayout, layoutPitch, archPlacements, meshScale]);
   const setLightning = useSimStore((s) => s.setLightning);
   const dayPeriods = useSimStore((s) => s.dayCycle.periods);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -446,11 +461,16 @@ export function LightningPanel({ visible = true }: { visible?: boolean }) {
             <SliderRow
               label="Light falloff"
               min={0}
-              max={0.2}
-              step={0.005}
-              value={lightning.falloffDistance}
+              max={Math.max(0.001, 0.2 * falloffFit)}
+              step={Math.max(0.0005, (0.2 * falloffFit) / 40)}
+              value={lightning.falloffDistance * falloffFit}
               onChange={(v) =>
-                upd({ falloffDistance: Math.max(0, Math.min(0.2, v)) })
+                upd({
+                  falloffDistance: Math.max(
+                    0,
+                    Math.min(0.2, v / Math.max(1e-6, falloffFit)),
+                  ),
+                })
               }
               formatValue={(v) => `${v.toFixed(3)} m`}
             />

@@ -16,7 +16,11 @@ import {
   Vector3,
 } from "three";
 import { applyMappingOrientationPoint } from "../mapping/geometry";
-import { archBackingMesh, DUAL_32X8_SLOTTED } from "../mapping/ledLayout";
+import {
+  archLayoutBounds,
+  archBackingMesh,
+  DUAL_32X8_SLOTTED,
+} from "../mapping/ledLayout";
 import {
   displaceLed,
   gaussianRayTransmission,
@@ -42,7 +46,10 @@ import {
 } from "../lighting/shade";
 import { activeWindowProgress, hourInRange, useSimStore } from "../state";
 import { computeSkyLighting } from "../lighting/skyCycle";
-import { sharedLightningController } from "../lighting/lightning";
+import {
+  LIGHTNING_REFERENCE_RADIUS,
+  sharedLightningController,
+} from "../lighting/lightning";
 import { WledStreamClient } from "../wled/client";
 import { publishFrame, publishLedPositions } from "../stream/frameBuffer";
 import {
@@ -357,6 +364,40 @@ export function Leds() {
     };
   }, [meshTarget.id]);
   const meshOccluder = useMemo(() => (meshGeom ? new Mesh(meshGeom) : null), [meshGeom]);
+  // Bolt and sprite volume follows the arches, in the same scaled layout
+  // space the LEDs use before the cloud rotation. `fit` shrinks the
+  // metre-based glow to that smaller structure.
+  const archLightning = useMemo(() => {
+    if (mapping.layout !== DUAL_32X8_SLOTTED) return null;
+    const bounds = archLayoutBounds(mapping.layoutPitch, mapping.archPlacements);
+    const flipped = applyMappingOrientationPoint(
+      bounds.center,
+      mapping.flipUpDown,
+      mapping.flipLeftRight,
+    );
+    const scale = meshTarget.scale;
+    const absScale = Math.abs(scale);
+    const rx = Math.max(1e-3, bounds.half[0] * absScale);
+    const ry = Math.max(1e-3, bounds.half[1] * absScale);
+    const rz = Math.max(1e-3, bounds.half[2] * absScale);
+    const mean = (rx + ry + rz) / 3;
+    return {
+      center: [flipped[0] * scale, flipped[1] * scale, flipped[2] * scale] as [
+        number,
+        number,
+        number,
+      ],
+      ellipsoid: { rx, ry, rz },
+      fit: mean / LIGHTNING_REFERENCE_RADIUS,
+    };
+  }, [
+    mapping.layout,
+    mapping.layoutPitch,
+    mapping.archPlacements,
+    mapping.flipUpDown,
+    mapping.flipLeftRight,
+    meshTarget.scale,
+  ]);
   const archOccluder = useMemo(() => {
     if (mapping.layout !== DUAL_32X8_SLOTTED) return null;
     const mesh = archBackingMesh(mapping.layoutPitch, mapping.archPlacements);
@@ -709,35 +750,57 @@ export function Leds() {
         offsetZ: cloud.offsetZ,
       };
       const half = meshHalfExtentsRef.current;
-      const boltEllipsoid = half
+      const meshEllipsoid = half
         ? {
             rx: Math.max(1e-3, half.hx * meshTarget.scale * 0.9),
             ry: Math.max(1e-3, half.hy * meshTarget.scale * 0.9),
             rz: Math.max(1e-3, half.hz * meshTarget.scale * 0.9),
           }
         : ellipsoid;
+      let boltEllipsoid = meshEllipsoid;
+      let boltXform = cloudXform;
+      let boltLightning = lightning;
+      if (archLightning) {
+        boltEllipsoid = archLightning.ellipsoid;
+        const shifted = rotateCloud(
+          archLightning.center,
+          cloudXform.tiltRad,
+          cloudXform.yawRad,
+        );
+        boltXform = {
+          ...cloudXform,
+          offsetX: cloudXform.offsetX + shifted[0],
+          offsetY: cloudXform.offsetY + shifted[1],
+          offsetZ: cloudXform.offsetZ + shifted[2],
+        };
+        boltLightning = {
+          ...lightning,
+          falloffDistance: lightning.falloffDistance * archLightning.fit,
+        };
+      }
       const keyframeU = activeWindowProgress(
         sky.timeHours,
         lightning.activeStartHour,
         lightning.activeEndHour,
       );
-      const sampleBoltSurface = meshTarget.id
-        ? (): [number, number, number] | null => {
-            if (!sampleMeshSurfacePoint(meshTarget.id!, boltSurfacePoint)) {
-              return null;
-            }
-            return [
-              boltSurfacePoint.x * meshTarget.scale,
-              boltSurfacePoint.y * meshTarget.scale,
-              boltSurfacePoint.z * meshTarget.scale,
-            ];
-          }
-        : undefined;
+      const sampleBoltSurface =
+        archLightning || !meshTarget.id
+          ? undefined
+          : (): [number, number, number] | null => {
+              if (!sampleMeshSurfacePoint(meshTarget.id!, boltSurfacePoint)) {
+                return null;
+              }
+              return [
+                boltSurfacePoint.x * meshTarget.scale,
+                boltSurfacePoint.y * meshTarget.scale,
+                boltSurfacePoint.z * meshTarget.scale,
+              ];
+            };
       lightningCtrl.update(
         now,
-        lightning,
+        boltLightning,
         boltEllipsoid,
-        cloudXform,
+        boltXform,
         keyframeU,
         sampleBoltSurface,
       );
@@ -758,9 +821,9 @@ export function Leds() {
             buffers.n,
             buffers.lightningColorFloats,
             now,
-            lightning,
+            boltLightning,
             boltEllipsoid,
-            cloudXform,
+            boltXform,
           );
         } else {
           buffers.lightningColorFloats.fill(0);

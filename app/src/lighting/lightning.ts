@@ -220,6 +220,13 @@ function sampleColorRamp(
 }
 
 /**
+ * Mean radius the falloff distance was tuned on (the default cloud
+ * ellipsoid). Arch lightning multiplies that distance by
+ * archMean / this, so the glow stays the same fraction of the structure.
+ */
+export const LIGHTNING_REFERENCE_RADIUS = 1;
+
+/**
  * Sample a random point within the ellipsoid while distributing samples
  * evenly by height. A uniform-volume sphere strongly favours its wide middle,
  * making flashes near the narrow cloud base/apex needlessly rare.
