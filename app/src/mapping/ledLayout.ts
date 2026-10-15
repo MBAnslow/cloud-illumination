@@ -4,6 +4,7 @@ import {
   Float32BufferAttribute,
   Mesh,
   MeshBasicMaterial,
+  Vector3,
 } from "three";
 import type { MappedLed, Vec3 } from "../state";
 
@@ -79,6 +80,17 @@ export function archLayoutBounds(
       Math.max(1e-4, (maxZ - minZ) / 2),
     ],
   };
+}
+
+/** Largest half-extent of the arches, in metres after mesh scale. */
+export function archShapeRadius(
+  pitch: number,
+  placements: readonly [ArchPlacement, ArchPlacement],
+  meshScale: number,
+): number {
+  const { half } = archLayoutBounds(pitch, placements);
+  const scale = Math.abs(meshScale) || 1;
+  return Math.max(1e-3, Math.max(half[0], half[1], half[2]) * scale);
 }
 
 export function resolveArchPlacements(
@@ -343,6 +355,69 @@ export function buildArchBackingGeometry(
   geometry.setAttribute("normal", new Float32BufferAttribute(normals, 3));
   geometry.setIndex(indices);
   return geometry;
+}
+
+function outerArchVertex(index: number): number {
+  const slot = index % 4;
+  if (slot === 0 || slot === 2) return index;
+  return index - 1;
+}
+
+/**
+ * A pointer hit on the arch shell, in the geometry's own layout space.
+ * Projects onto the outer face (where the LEDs sit) and returns that
+ * face's outward normal, so a dome placed from either side of the strip
+ * stays on the LED surface.
+ */
+export function projectArchHitToOuterSurface(
+  geometry: BufferGeometry,
+  face: { a: number; b: number; c: number },
+  localPoint: Vec3,
+): { pos: Vec3; normal: Vec3 } {
+  const positions = geometry.getAttribute("position");
+  const normals = geometry.getAttribute("normal");
+  const pa = new Vector3().fromBufferAttribute(positions, face.a);
+  const pb = new Vector3().fromBufferAttribute(positions, face.b);
+  const pc = new Vector3().fromBufferAttribute(positions, face.c);
+  const hit = new Vector3(localPoint[0], localPoint[1], localPoint[2]);
+  const v0 = pb.clone().sub(pa);
+  const v1 = pc.clone().sub(pa);
+  const v2 = hit.clone().sub(pa);
+  const d00 = v0.dot(v0);
+  const d01 = v0.dot(v1);
+  const d11 = v1.dot(v1);
+  const d20 = v2.dot(v0);
+  const d21 = v2.dot(v1);
+  const denom = d00 * d11 - d01 * d01;
+  let bu = 1 / 3;
+  let bv = 1 / 3;
+  let bw = 1 / 3;
+  if (Math.abs(denom) > 1e-12) {
+    bv = (d11 * d20 - d01 * d21) / denom;
+    bw = (d00 * d21 - d01 * d20) / denom;
+    bu = 1 - bv - bw;
+  }
+  const n = new Vector3()
+    .fromBufferAttribute(normals, face.a)
+    .multiplyScalar(bu)
+    .add(new Vector3().fromBufferAttribute(normals, face.b).multiplyScalar(bv))
+    .add(new Vector3().fromBufferAttribute(normals, face.c).multiplyScalar(bw));
+  if (n.lengthSq() < 1e-12) n.set(0, 1, 0);
+  else n.normalize();
+  const onOuterFace = [face.a, face.b, face.c].every((index) => {
+    const slot = index % 4;
+    return slot === 0 || slot === 2;
+  });
+  if (!onOuterFace) {
+    const outer = new Vector3().fromBufferAttribute(positions, outerArchVertex(face.a));
+    const signed =
+      n.x * (outer.x - hit.x) + n.y * (outer.y - hit.y) + n.z * (outer.z - hit.z);
+    hit.addScaledVector(n, signed);
+  }
+  return {
+    pos: [hit.x, hit.y, hit.z],
+    normal: [n.x, n.y, n.z],
+  };
 }
 
 export function archBackingMesh(

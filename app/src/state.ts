@@ -7,6 +7,7 @@ import {
 } from "./lighting/ledColor";
 import { loadSnapshot, type Snapshot } from "./state/persistence";
 import {
+  archLayoutBounds,
   buildDual32x8Slotted,
   DEFAULT_ARCH_PLACEMENTS,
   DEFAULT_LAYOUT_PITCH,
@@ -128,6 +129,16 @@ export interface LightningKeyframe {
   values: LightningAnimParams;
 }
 
+/** Axis-aligned box bolts are spawned inside, before the cloud rotation. */
+export interface LightningVolume {
+  /** Full width, height, depth in metres. */
+  size: Vec3;
+  /** Centre of the box, in metres. */
+  center: Vec3;
+  /** Draw the box edges in the simulator. */
+  visible: boolean;
+}
+
 export interface LightningParams {
   enabled: boolean;
   /**
@@ -190,6 +201,11 @@ export interface LightningParams {
    * so bolts don't degenerate into a tiny spark.
    */
   minSpanScale: number;
+  /**
+   * Cuboid, in metres, that bolts are generated inside. `size` is the full
+   * width, height and depth. `center` is in the same space as the LED arches.
+   */
+  volume: LightningVolume;
   /** Hour in [0, 24) at which lightning activity switches on. */
   activeStartHour: number;
   /** Hour in [0, 24) at which lightning activity switches off. */
@@ -968,6 +984,15 @@ export function buildDefaultChannelStops(channel: SkyChannel): SkyChannelStop[] 
   }));
 }
 
+const DEFAULT_LIGHTNING_VOLUME: LightningVolume = (() => {
+  const bounds = archLayoutBounds(DEFAULT_LAYOUT_PITCH, DEFAULT_ARCH_PLACEMENTS);
+  return {
+    size: [bounds.half[0] * 2, bounds.half[1] * 2, bounds.half[2] * 2],
+    center: [...bounds.center],
+    visible: false,
+  };
+})();
+
 const DEFAULTS = {
   ellipsoid: { rx: 1.2, ry: 0.8, rz: 1.0 } as EllipsoidParams,
   cloud: {
@@ -1109,10 +1134,15 @@ const DEFAULTS = {
     falloffDistance: 0.1,
     boltSegments: 10,
     boltJitterRange: [0.25, 0.55],
-    travelSpeedRange: [0.5, 2],
+    travelSpeedRange: [0.5, 1],
     subFlashes: 0.4,
     spanScale: 0.85,
     minSpanScale: 0.5,
+    volume: {
+      size: [...DEFAULT_LIGHTNING_VOLUME.size],
+      center: [...DEFAULT_LIGHTNING_VOLUME.center],
+      visible: false,
+    },
     activeStartHour: 20,
     activeEndHour: 4,
     boltSamples: [],
@@ -1138,14 +1168,7 @@ const DEFAULTS = {
       { id: "dawn", name: "Dawn", startHour: 5, endHour: 8, color: "#f472b6" },
       { id: "day", name: "Day", startHour: 8, endHour: 17, color: "#facc15" },
       { id: "dusk", name: "Dusk", startHour: 17, endHour: 20, color: "#fb923c" },
-      { id: "night", name: "Night", startHour: 20, endHour: 0, color: "#6366f1" },
-      {
-        id: "magicalNight",
-        name: "Magical night",
-        startHour: 0,
-        endHour: 5,
-        color: "#c084fc",
-      },
+      { id: "night", name: "Night", startHour: 20, endHour: 5, color: "#6366f1" },
     ],
     activePeriodId: "dawn",
     autoNext: false,
@@ -1330,7 +1353,7 @@ function resolveChannelStops(
 /**
  * Reconcile a saved `dayCycle` payload. Falls back to defaults for a
  * missing or malformed slice; unknown activeId → first period.
- * Migrates the legacy single Night (20→5) into Night + Magical night.
+ * Drops the retired Magical night period and gives its hours to Night.
  */
 function resolveDayCycle(
   saved: Partial<DayCycleParams> | undefined,
@@ -1354,44 +1377,32 @@ function resolveDayCycle(
           color: p.color,
         }))
     : DEFAULTS.dayCycle.periods;
-  periods = migrateLegacyNightPeriod(periods);
+  periods = withoutMagicalNight(periods);
   const activePeriodId =
     saved.activePeriodId && periods.some((p) => p.id === saved.activePeriodId)
       ? saved.activePeriodId
-      : periods[0].id;
+      : (periods.find((p) => p.id === "night") ?? periods[0]).id;
   const autoNext =
     typeof saved.autoNext === "boolean" ? saved.autoNext : DEFAULTS.dayCycle.autoNext;
   return { periods, activePeriodId, autoNext };
 }
 
-/**
- * If the saved cycle still has a single Night spanning 20→5 (and no
- * Magical night yet), split it into Night 20→0 and Magical night 0→5.
- */
-function migrateLegacyNightPeriod(periods: DayPeriod[]): DayPeriod[] {
-  if (periods.some((p) => p.id === "magicalNight")) return periods;
-  const nightIdx = periods.findIndex((p) => p.id === "night");
-  if (nightIdx < 0) return periods;
-  const night = periods[nightIdx];
-  // Only rewrite the classic default span; leave custom night ranges alone.
-  const isLegacySpan =
-    Math.abs(night.startHour - 20) < 1e-6 && Math.abs(night.endHour - 5) < 1e-6;
-  if (!isLegacySpan) return periods;
-  const next = [...periods];
-  next[nightIdx] = {
-    ...night,
-    name: night.name || "Night",
-    startHour: 20,
-    endHour: 0,
-  };
-  next.splice(nightIdx + 1, 0, {
-    id: "magicalNight",
-    name: "Magical night",
-    startHour: 0,
-    endHour: 5,
-    color: "#c084fc",
-  });
-  return next;
+/** Remove Magical night and let Night cover the hours it used to own. */
+function withoutMagicalNight(periods: DayPeriod[]): DayPeriod[] {
+  const magical = periods.find(
+    (p) =>
+      p.id === "magicalNight" ||
+      p.name.trim().toLowerCase() === "magical night" ||
+      p.name.trim().toLowerCase() === "magical twilight",
+  );
+  if (!magical) return periods;
+  return periods
+    .filter((p) => p !== magical)
+    .map((p) =>
+      p.id === "night" && Math.abs(p.endHour - magical.startHour) < 1e-3
+        ? { ...p, endHour: magical.endHour }
+        : p,
+    );
 }
 
 /**
@@ -1790,6 +1801,37 @@ function resolveLightningSpriteSamples(input: unknown): LightningSpriteSample[] 
   return out;
 }
 
+function resolveLightningVolume(
+  saved: unknown,
+  fallback: LightningVolume,
+): LightningVolume {
+  const raw = (saved && typeof saved === "object" ? saved : {}) as Partial<LightningVolume>;
+  const axis = (
+    value: unknown,
+    fallbackValue: number,
+    lo: number,
+    hi: number,
+  ) =>
+    typeof value === "number" && Number.isFinite(value)
+      ? Math.max(lo, Math.min(hi, value))
+      : fallbackValue;
+  const size = Array.isArray(raw.size) ? raw.size : fallback.size;
+  const center = Array.isArray(raw.center) ? raw.center : fallback.center;
+  return {
+    size: [
+      axis(size[0], fallback.size[0], 0.02, 4),
+      axis(size[1], fallback.size[1], 0.02, 4),
+      axis(size[2], fallback.size[2], 0.02, 4),
+    ],
+    center: [
+      axis(center[0], fallback.center[0], -2, 2),
+      axis(center[1], fallback.center[1], -2, 2),
+      axis(center[2], fallback.center[2], -2, 2),
+    ],
+    visible: typeof raw.visible === "boolean" ? raw.visible : fallback.visible,
+  };
+}
+
 function resolveLightning(input: unknown): LightningParams {
   const d = DEFAULTS.lightning;
   if (!input || typeof input !== "object") return d;
@@ -1932,11 +1974,17 @@ function resolveLightning(input: unknown): LightningParams {
       "boltJitter",
       d.boltJitterRange,
     ),
-    travelSpeedRange: asPairFromScalar(
-      "travelSpeedRange",
-      "travelSpeed",
-      d.travelSpeedRange,
-    ),
+    travelSpeedRange: (() => {
+      const [lo, hi] = asPairFromScalar(
+        "travelSpeedRange",
+        "travelSpeed",
+        d.travelSpeedRange,
+      );
+      const clamp = (v: number) => Math.max(0.1, Math.min(1, v));
+      const a = clamp(lo);
+      const b = clamp(hi);
+      return [Math.min(a, b), Math.max(a, b)] as [number, number];
+    })(),
     subFlashes: migrateSubFlashes(
       typeof saved.subFlashes === "number" ? saved.subFlashes : d.subFlashes,
     ),
@@ -1950,6 +1998,7 @@ function resolveLightning(input: unknown): LightningParams {
       if (typeof v !== "number" || !Number.isFinite(v)) return d.pan;
       return Math.max(-1, Math.min(1, v));
     })(),
+    volume: resolveLightningVolume(saved.volume, d.volume),
     boltSamples: resolveLightningSamples(
       (saved as Record<string, unknown>).boltSamples,
     ),

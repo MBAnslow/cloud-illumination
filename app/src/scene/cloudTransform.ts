@@ -1,9 +1,14 @@
+import { Matrix4, Vector3 } from "three";
+
 /**
  * Shared helpers for transforming points and directions from cloud-local
  * space into world space using the current cloud tilt (X), yaw (Y) and
  * planar XZ offset. Kept in one place so LEDs, breath area, lightning,
  * and any other scene consumers stay in sync.
  */
+
+const _point = new Vector3();
+const _inverse = new Matrix4();
 export function rotateY(
   v: [number, number, number],
   radians: number,
@@ -49,12 +54,22 @@ export interface CloudTransform {
   offsetX: number;
   offsetY: number;
   offsetZ: number;
+  /**
+   * When set, this rigid transform replaces tilt/yaw/offset. Used so the
+   * lightning cuboid follows the same mesh-then-cloud chain as the arches
+   * instead of adding those Euler angles together.
+   */
+  matrix?: Matrix4;
 }
 
 export function applyCloudTransform(
   v: [number, number, number],
   t: CloudTransform,
 ): [number, number, number] {
+  if (t.matrix) {
+    _point.set(v[0], v[1], v[2]).applyMatrix4(t.matrix);
+    return [_point.x, _point.y, _point.z];
+  }
   const r = offsetXZ(rotateCloud(v, t.tiltRad, t.yawRad), t.offsetX, t.offsetZ);
   return [r[0], r[1] + t.offsetY, r[2]];
 }
@@ -64,6 +79,11 @@ export function inverseCloudTransform(
   v: [number, number, number],
   t: CloudTransform,
 ): [number, number, number] {
+  if (t.matrix) {
+    _inverse.copy(t.matrix).invert();
+    _point.set(v[0], v[1], v[2]).applyMatrix4(_inverse);
+    return [_point.x, _point.y, _point.z];
+  }
   const unOffset: [number, number, number] = [
     v[0] - t.offsetX,
     v[1] - t.offsetY,

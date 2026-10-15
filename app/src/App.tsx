@@ -16,6 +16,7 @@ import { HorizonGuide } from "./scene/HorizonGuide";
 import { ArchBacking } from "./scene/ArchBacking";
 import { Leds } from "./scene/Leds";
 import { LightningBolts } from "./scene/LightningBolts";
+import { LightningVolumeGuide } from "./scene/LightningVolume";
 import { Lights } from "./scene/Lights";
 import { SkyDome } from "./scene/SkyDome";
 import { useSimStore } from "./state";
@@ -70,6 +71,7 @@ export default function App() {
         <ArchBacking includeCloud />
         <Leds />
         <CloudTop />
+        <LightningVolumeGuide />
         <LightningBolts />
 
         <OrbitControls makeDefault />

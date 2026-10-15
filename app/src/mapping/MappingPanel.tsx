@@ -414,7 +414,9 @@ export function MappingPanel({
         </div>
         <div style={{ opacity: 0.7, lineHeight: 1.4, marginBottom: 8 }}>
           {generated
-            ? "The strand is the crossed arches above. Dragging does not move those LEDs; offset still lifts a bead along its normal, and domes still shape the surface."
+            ? tool === "gaussian"
+              ? "Click an arch to place a smooth dome on its surface. Drag the marker to slide it along the strip, then shape the peak and footprint below."
+              : "The strand is the crossed arches above. Dragging does not move those LEDs; offset still lifts a bead along its normal, and domes still shape the surface."
             : tool === "place"
             ? "Click the cloud surface to place the next LED. Drag a bead to slide it on the surface. You can only add or delete at the end of the string."
             : tool === "offset"

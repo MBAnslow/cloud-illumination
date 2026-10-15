@@ -2,7 +2,8 @@ import { useLayoutEffect, useMemo } from "react";
 import { Object3D, Quaternion, Vector3 } from "three";
 import { useSimStore } from "../state";
 import { computeSkyLighting } from "../lighting/skyCycle";
-import { spreadToSpotAngle } from "../lighting/shade";
+import { skySpreadToSpotAngle } from "../lighting/shade";
+import { archShapeRadius, DUAL_32X8_SLOTTED } from "../mapping/ledLayout";
 
 function clamp01(v: number): number {
   if (v <= 0) return 0;
@@ -25,6 +26,8 @@ export function Lights() {
   const sky = useSimStore((s) => s.sky);
   const cloud = useSimStore((s) => s.cloud);
   const mesh = useSimStore((s) => s.mesh);
+  const mapping = useSimStore((s) => s.mapping);
+  const ellipsoid = useSimStore((s) => s.ellipsoid);
   const MANUAL_BLEND_WHEN_SKY = 0.2;
 
   const skyLighting = computeSkyLighting(sky);
@@ -55,8 +58,26 @@ export function Lights() {
     cloudCenter[1] + skyLighting.moonDirection[1] * orbitRadiusY,
     cloudCenter[2] + skyLighting.moonDirection[2] * orbitRadiusZ,
   ];
-  const sunAngle = spreadToSpotAngle(sky.sunSpread ?? 0.9);
-  const moonAngle = spreadToSpotAngle(sky.moonSpread ?? 0.9);
+  const shapeRadius =
+    mapping.layout === DUAL_32X8_SLOTTED
+      ? archShapeRadius(mapping.layoutPitch, mapping.archPlacements, mesh.scale)
+      : Math.max(ellipsoid.rx, ellipsoid.ry, ellipsoid.rz);
+  const sunDistance = Math.hypot(
+    skyLighting.sunDirection[0] * orbitRadiusX,
+    skyLighting.sunDirection[1] * orbitRadiusY,
+    skyLighting.sunDirection[2] * orbitRadiusZ,
+  );
+  const moonDistance = Math.hypot(
+    skyLighting.moonDirection[0] * orbitRadiusX,
+    skyLighting.moonDirection[1] * orbitRadiusY,
+    skyLighting.moonDirection[2] * orbitRadiusZ,
+  );
+  const sunAngle = skySpreadToSpotAngle(sky.sunSpread ?? 0.9, sunDistance, shapeRadius);
+  const moonAngle = skySpreadToSpotAngle(
+    sky.moonSpread ?? 0.9,
+    moonDistance,
+    shapeRadius,
+  );
   const sunCone = useMemo(() => {
     const source = new Vector3(sunPos[0], sunPos[1], sunPos[2]);
     const target = new Vector3(cloudCenter[0], cloudCenter[1], cloudCenter[2]);

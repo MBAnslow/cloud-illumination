@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { linearChannelToSrgbByte } from "../lighting/ledColor";
 import { dual32x8Cell } from "../mapping/ledLayout";
 import { getFrame } from "../stream/frameBuffer";
 
@@ -85,9 +86,9 @@ function StreamMatrixInner() {
         }
         const x = col * cellW;
         const y = panel * (panelH + gap) + row * cellH;
-        const r = bytes[i3] ?? 0;
-        const g = bytes[i3 + 1] ?? 0;
-        const b = bytes[i3 + 2] ?? 0;
+        const r = linearChannelToSrgbByte((bytes[i3] ?? 0) / 255);
+        const g = linearChannelToSrgbByte((bytes[i3 + 1] ?? 0) / 255);
+        const b = linearChannelToSrgbByte((bytes[i3 + 2] ?? 0) / 255);
         ctx.fillStyle = `rgb(${r},${g},${b})`;
         ctx.fillRect(x, y, Math.ceil(cellW), Math.ceil(cellH));
       }

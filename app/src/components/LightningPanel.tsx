@@ -15,11 +15,12 @@ import {
 } from "../state";
 import { useDraggable } from "./useDraggable";
 import { RangeSlider } from "./RangeSlider";
+import { ColorInput } from "./ColorInput";
 import { putSampleBlob, deleteSampleBlob } from "../state/blobStorage";
 import { invalidateSpriteImage } from "../lighting/spriteImageCache";
 import {
   isRangePlotChannel,
-  LIGHTNING_REFERENCE_RADIUS,
+  lightningVolumeBox,
   plotChannelMax,
   sampleLightningKeyframe,
   samplePlotChannel,
@@ -28,7 +29,6 @@ import {
   interpolateLightningColorStops,
   type LightningPlotChannel,
 } from "../lighting/lightning";
-import { archLayoutBounds, DUAL_32X8_SLOTTED } from "../mapping/ledLayout";
 
 /** Suffix for params that ride the flash keyframe envelope. */
 const KF = "*";
@@ -37,9 +37,26 @@ type ColorChannel = "main" | "highlight1" | "highlight2";
 
 const CHANNEL_LABELS: Record<ColorChannel, string> = {
   main: "Main",
-  highlight1: "Hl 1",
-  highlight2: "Hl 2",
+  highlight1: "Highlight 1",
+  highlight2: "Highlight 2",
 };
+
+function lightningChannelColor(stops: LightningColorStop[]): string {
+  if (stops.length === 0) return "#cfe7ff";
+  return [...stops].sort((a, b) => a.t - b.t)[0]!.color;
+}
+
+function withChannelColor(
+  colors: LightningColorTracks,
+  channel: ColorChannel,
+  color: string,
+): LightningColorTracks {
+  const existing = colors[channel][0];
+  return {
+    ...colors,
+    [channel]: [{ id: existing?.id ?? `${channel}-color`, t: 0, color }],
+  };
+}
 
 const PIN_SIZE = 12;
 const TRACK_HEIGHT = 18;
@@ -85,156 +102,21 @@ function lightningTooltip(label: string): string | undefined {
  */
 export function LightningPanel({ visible = true }: { visible?: boolean }) {
   const lightning = useSimStore((s) => s.lightning);
-  const ledLayout = useSimStore((s) => s.mapping.layout);
-  const layoutPitch = useSimStore((s) => s.mapping.layoutPitch);
-  const archPlacements = useSimStore((s) => s.mapping.archPlacements);
   const meshScale = useSimStore((s) => s.mesh.scale);
-  const falloffFit = useMemo(() => {
-    if (ledLayout !== DUAL_32X8_SLOTTED) return 1;
-    const bounds = archLayoutBounds(layoutPitch, archPlacements);
-    const absScale = Math.abs(meshScale);
-    const mean =
-      ((bounds.half[0] + bounds.half[1] + bounds.half[2]) / 3) * absScale;
-    return mean / LIGHTNING_REFERENCE_RADIUS;
-  }, [ledLayout, layoutPitch, archPlacements, meshScale]);
+  const falloffFit = useMemo(
+    () => lightningVolumeBox(lightning.volume, meshScale).fit,
+    [lightning.volume, meshScale],
+  );
   const setLightning = useSimStore((s) => s.setLightning);
-  const dayPeriods = useSimStore((s) => s.dayCycle.periods);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const { pos, handleProps } = useDraggable(panelRef);
   const dynStyle: React.CSSProperties = pos
     ? { top: pos.top, left: pos.left, bottom: "auto", right: "auto" }
     : {};
 
-  const sorted = useMemo(
-    () => [...lightning.keyframes].sort((a, b) => a.t - b.t),
-    [lightning.keyframes],
-  );
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [plotChannel, setPlotChannel] =
-    useState<LightningPlotChannel>("intensity");
-  const skyTimeHours = useSimStore((s) => s.sky.timeHours);
-  const selected =
-    sorted.find((k) => k.id === selectedId) ?? sorted[0] ?? null;
-  const anim: LightningAnimParams = {
-    intensityRange:
-      selected?.values.intensityRange ?? lightning.intensityRange,
-    strikesPerMinute:
-      selected?.values.strikesPerMinute ?? lightning.strikesPerMinute,
-    strikePerMinute:
-      selected?.values.strikePerMinute ?? lightning.strikePerMinute,
-    spritesPerMinute:
-      selected?.values.spritesPerMinute ?? lightning.spritesPerMinute,
-    spriteStrobeDutyRange: selected?.values.spriteStrobeDutyRange ?? [
-      lightning.spriteStrobeDuty,
-      lightning.spriteStrobeDuty,
-    ],
-    subFlashes: selected?.values.subFlashes ?? lightning.subFlashes,
-    spanScale: selected?.values.spanScale ?? lightning.spanScale,
-    minSpanScale: selected?.values.minSpanScale ?? lightning.minSpanScale,
-    boltGain: selected?.values.boltGain ?? lightning.boltGain,
-    spriteGain: selected?.values.spriteGain ?? lightning.spriteGain,
-    backgroundGain: selected?.values.backgroundGain ?? lightning.backgroundGain,
-    thunderDelayMs: selected?.values.thunderDelayMs ?? lightning.thunderDelayMs,
-    pan: selected?.values.pan ?? lightning.pan,
-  };
-  const inActiveWindow = hourInRange(
-    skyTimeHours,
-    lightning.activeStartHour,
-    lightning.activeEndHour,
-  );
-  const playheadU = activeWindowProgress(
-    skyTimeHours,
-    lightning.activeStartHour,
-    lightning.activeEndHour,
-  );
-
   if (!visible) return null;
 
   const upd = (patch: Partial<LightningParams>) => setLightning(patch);
-
-  const setKeyframes = (keyframes: LightningKeyframe[]) => {
-    upd({ keyframes });
-  };
-
-  const patchAnim = (patch: Partial<LightningAnimParams>) => {
-    if (!selected) return;
-    setSelectedId(selected.id);
-    const changed = Object.keys(patch)[0] as keyof LightningAnimParams | undefined;
-    const channel: LightningPlotChannel | null =
-      changed === "intensityRange"
-        ? "intensity"
-        : changed === "spanScale" || changed === "minSpanScale"
-          ? "span"
-          : changed === "thunderDelayMs"
-            ? "thunderDelay"
-            : changed && changed !== "spriteStrobeDutyRange"
-              ? (changed as LightningPlotChannel)
-              : null;
-    if (channel) setPlotChannel(channel);
-    const nextValues: LightningAnimParams = {
-      ...selected.values,
-      ...patch,
-    };
-    if (patch.intensityRange) {
-      nextValues.intensityRange = [
-        patch.intensityRange[0],
-        patch.intensityRange[1],
-      ];
-    }
-    if (patch.spriteStrobeDutyRange) {
-      nextValues.spriteStrobeDutyRange = [
-        patch.spriteStrobeDutyRange[0],
-        patch.spriteStrobeDutyRange[1],
-      ];
-    }
-    if (patch.spanScale !== undefined || patch.minSpanScale !== undefined) {
-      const hi = Math.max(0, Math.min(1, nextValues.spanScale));
-      const lo = Math.max(0, Math.min(hi, nextValues.minSpanScale));
-      nextValues.spanScale = hi;
-      nextValues.minSpanScale = lo;
-    }
-    const keyframes = lightning.keyframes.map((k) =>
-      k.id === selected.id ? { ...k, values: nextValues } : k,
-    );
-    upd({
-      keyframes,
-      intensityRange: nextValues.intensityRange,
-      strikesPerMinute: nextValues.strikesPerMinute,
-      strikePerMinute: nextValues.strikePerMinute,
-      spritesPerMinute: nextValues.spritesPerMinute,
-      subFlashes: nextValues.subFlashes,
-      spanScale: nextValues.spanScale,
-      minSpanScale: nextValues.minSpanScale,
-      boltGain: nextValues.boltGain,
-      spriteGain: nextValues.spriteGain,
-      backgroundGain: nextValues.backgroundGain,
-      thunderDelayMs: nextValues.thunderDelayMs,
-      pan: nextValues.pan,
-    });
-  };
-
-  const plotLabel =
-    plotChannel === "intensity"
-      ? "intensity"
-      : plotChannel === "strikesPerMinute"
-        ? "cloud/min"
-        : plotChannel === "strikePerMinute"
-          ? "strike/min"
-          : plotChannel === "spritesPerMinute"
-            ? "sprites/min"
-            : plotChannel === "subFlashes"
-              ? "branch prob"
-              : plotChannel === "span"
-                ? "span"
-                : plotChannel === "boltGain"
-                  ? "bolt gain"
-                  : plotChannel === "spriteGain"
-                    ? "sprite brightness"
-                    : plotChannel === "backgroundGain"
-                      ? "bg gain"
-                      : plotChannel === "thunderDelay"
-                        ? "thunder delay"
-                        : "pan";
 
   return (
     <div ref={panelRef} style={{ ...panelStyle, ...dynStyle }}>
@@ -282,182 +164,124 @@ export function LightningPanel({ visible = true }: { visible?: boolean }) {
         >
           Ground strike
         </button>
-        <button
-          type="button"
-          style={miniBtn}
-          disabled={(lightning.spriteSamples?.length ?? 0) === 0}
-          title={
-            (lightning.spriteSamples?.length ?? 0) === 0
-              ? "Upload at least one sprite image first"
-              : "Spawn a sprite using the current settings"
-          }
-          onClick={() => sharedLightningController.requestManualTrigger("sprite")}
-        >
-          Sprite
-        </button>
       </div>
       <div style={panelScrollStyle}>
-        <KeyframeEditor
-          keyframes={lightning.keyframes}
-          selectedId={selected?.id ?? null}
-          plotChannel={plotChannel}
-          plotLabel={plotLabel}
-          playheadU={inActiveWindow ? playheadU : null}
-          activeStartHour={lightning.activeStartHour}
-          activeEndHour={lightning.activeEndHour}
-          periods={dayPeriods}
-          onSelect={setSelectedId}
-          onChange={setKeyframes}
-        />
-        <div style={{ fontSize: 9, opacity: 0.55, marginBottom: 2 }}>
-          {KF} = changes across the active window (sky timeline). Click a
-          label to plot; yellow line = current time.
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ ...inlineLabel, marginBottom: 6 }}>
+            <input
+              type="checkbox"
+              checked={lightning.volume.visible}
+              onChange={(e) =>
+                upd({
+                  volume: { ...lightning.volume, visible: e.target.checked },
+                })
+              }
+            />
+            Show volume
+          </label>
+          {(
+            [
+              ["Width", 0],
+              ["Height", 1],
+              ["Depth", 2],
+            ] as const
+          ).map(([label, axis]) => (
+            <SliderRow
+              key={label}
+              label={label}
+              min={0.02}
+              max={2}
+              step={0.001}
+              value={lightning.volume.size[axis]}
+              onChange={(v) => {
+                const size = [...lightning.volume.size] as [
+                  number,
+                  number,
+                  number,
+                ];
+                size[axis] = v;
+                upd({ volume: { ...lightning.volume, size } });
+              }}
+              formatValue={(v) => `${Math.round(v * 1000)} mm`}
+            />
+          ))}
+          {(
+            [
+              ["Center X", 0],
+              ["Center Y", 1],
+              ["Center Z", 2],
+            ] as const
+          ).map(([label, axis]) => (
+            <SliderRow
+              key={label}
+              label={label}
+              min={-1}
+              max={1}
+              step={0.001}
+              value={lightning.volume.center[axis]}
+              onChange={(v) => {
+                const center = [...lightning.volume.center] as [
+                  number,
+                  number,
+                  number,
+                ];
+                center[axis] = v;
+                upd({ volume: { ...lightning.volume, center } });
+              }}
+              formatValue={(v) => `${Math.round(v * 1000)} mm`}
+            />
+          ))}
         </div>
-        <LightningColourEditor
-          colors={lightning.colors}
-          playheadU={inActiveWindow ? playheadU : null}
-          onChangeColors={(colors) => upd({ colors })}
-        />
-        <div style={threeColStyle}>
-          <div style={colStyle}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 8 }}>
+          {(["main", "highlight1", "highlight2"] as ColorChannel[]).map((channel) => (
+            <label
+              key={channel}
+              style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11 }}
+            >
+              <span style={{ width: 78 }}>{CHANNEL_LABELS[channel]}</span>
+              <ColorInput
+                compact
+                color={lightningChannelColor(lightning.colors[channel])}
+                onChange={(color) =>
+                  upd({
+                    colors: withChannelColor(lightning.colors, channel, color),
+                  })
+                }
+              />
+            </label>
+          ))}
+        </div>
+        <div style={colStyle}>
             <RangeRow
-              label={`Intensity${KF}`}
-              labelActive={plotChannel === "intensity"}
-              onLabelClick={() => setPlotChannel("intensity")}
+              label="Intensity"
               min={0}
               max={3}
               step={0.01}
-              low={anim.intensityRange[0]}
-              high={anim.intensityRange[1]}
-              onChange={(lo, hi) => patchAnim({ intensityRange: [lo, hi] })}
+              low={lightning.intensityRange[0]}
+              high={lightning.intensityRange[1]}
+              onChange={(lo, hi) => upd({ intensityRange: [lo, hi] })}
               format={(lo, hi) => `${lo.toFixed(2)} – ${hi.toFixed(2)}`}
             />
             <SliderRow
-              label={`Cloud / min${KF}`}
-              labelActive={plotChannel === "strikesPerMinute"}
-              onLabelClick={() => setPlotChannel("strikesPerMinute")}
-              value={anim.strikesPerMinute}
+              label="Cloud / min"
+              value={lightning.strikesPerMinute}
               min={0}
               max={40}
               step={1}
-              onChange={(v) => patchAnim({ strikesPerMinute: v })}
+              onChange={(v) => upd({ strikesPerMinute: v })}
               formatValue={(v) => `${v.toFixed(0)}/min`}
             />
             <SliderRow
-              label={`Strike / min${KF}`}
-              labelActive={plotChannel === "strikePerMinute"}
-              onLabelClick={() => setPlotChannel("strikePerMinute")}
-              value={anim.strikePerMinute}
+              label="Strike / min"
+              value={lightning.strikePerMinute}
               min={0}
               max={40}
               step={0.1}
               onChange={(v) =>
-                patchAnim({ strikePerMinute: Math.max(0, Math.min(40, v)) })
+                upd({ strikePerMinute: Math.max(0, Math.min(40, v)) })
               }
               formatValue={(v) => `${v.toFixed(1)}/min`}
             />
-            <SliderRow
-              label={`Sprites / min${KF}`}
-              labelActive={plotChannel === "spritesPerMinute"}
-              onLabelClick={() => setPlotChannel("spritesPerMinute")}
-              value={anim.spritesPerMinute}
-              min={0}
-              max={40}
-              step={0.1}
-              onChange={(v) =>
-                patchAnim({ spritesPerMinute: Math.max(0, Math.min(40, v)) })
-              }
-              formatValue={(v) => `${v.toFixed(1)}/min`}
-            />
-            <SliderRow
-              label={`Sprite brightness${KF}`}
-              labelActive={plotChannel === "spriteGain"}
-              onLabelClick={() => setPlotChannel("spriteGain")}
-              value={anim.spriteGain}
-              min={0}
-              max={3}
-              step={0.05}
-              onChange={(v) =>
-                patchAnim({ spriteGain: Math.max(0, Math.min(3, v)) })
-              }
-              formatValue={(v) => v.toFixed(2)}
-            />
-            <label
-              title={LIGHTNING_TOOLTIPS["Audio-reactive brightness"]}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                fontSize: 11,
-                padding: "2px 0",
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={lightning.spriteAudioReactiveBrightness}
-                onChange={(e) =>
-                  upd({ spriteAudioReactiveBrightness: e.target.checked })
-                }
-              />
-              Audio-reactive brightness
-            </label>
-            <SliderRow
-              label="Sprite duration"
-              value={lightning.spriteDurationMs}
-              min={40}
-              max={3000}
-              step={10}
-              onChange={(v) =>
-                upd({ spriteDurationMs: Math.max(20, Math.min(3000, v)) })
-              }
-              formatValue={(v) => `${v.toFixed(0)} ms`}
-            />
-            {!lightning.spriteAudioReactiveBrightness && (
-              <>
-                <SliderRow
-                  label="Sprite strobe"
-                  value={lightning.spriteStrobeHz}
-                  min={1}
-                  max={40}
-                  step={1}
-                  onChange={(v) =>
-                    upd({ spriteStrobeHz: Math.max(1, Math.min(60, v)) })
-                  }
-                  formatValue={(v) => `${v.toFixed(0)} Hz`}
-                />
-                <RangeRow
-                  label={`Strobe duty${KF}`}
-                  min={0.05}
-                  max={0.95}
-                  step={0.01}
-                  low={anim.spriteStrobeDutyRange[0]}
-                  high={anim.spriteStrobeDutyRange[1]}
-                  onChange={(lo, hi) =>
-                    patchAnim({
-                      spriteStrobeDutyRange: [
-                        Math.max(0.05, Math.min(0.95, lo)),
-                        Math.max(0.05, Math.min(0.95, hi)),
-                      ],
-                    })
-                  }
-                  format={(lo, hi) =>
-                    `${(lo * 100).toFixed(0)}–${(hi * 100).toFixed(0)}%`
-                  }
-                />
-              </>
-            )}
-            {lightning.enabled && !inActiveWindow && (
-              <div
-                style={{
-                  fontSize: 10,
-                  color: "rgba(255,190,120,0.9)",
-                  margin: "2px 0 4px",
-                }}
-              >
-                Outside active window — scrub the sky time or widen Start/End
-                hour so strikes can fire.
-              </div>
-            )}
             <SliderRow
               label="Light falloff"
               min={0}
@@ -496,37 +320,34 @@ export function LightningPanel({ visible = true }: { visible?: boolean }) {
             <RangeRow
               label="Travel (m/s)"
               min={0.1}
-              max={5}
-              step={0.05}
+              max={1}
+              step={0.01}
               low={lightning.travelSpeedRange[0]}
               high={lightning.travelSpeedRange[1]}
               onChange={(lo, hi) => upd({ travelSpeedRange: [lo, hi] })}
-              format={(lo, hi) => `${lo.toFixed(1)} – ${hi.toFixed(1)}`}
+              format={(lo, hi) => `${lo.toFixed(2)} – ${hi.toFixed(2)}`}
             />
             <SliderRow
-              label={`Sub-flashes${KF}`}
-              labelActive={plotChannel === "subFlashes"}
-              onLabelClick={() => setPlotChannel("subFlashes")}
-              value={anim.subFlashes}
+              label="Sub-flashes"
+              value={lightning.subFlashes}
               min={0}
               max={1}
               step={0.01}
-              onChange={(v) =>
-                patchAnim({ subFlashes: Math.max(0, Math.min(1, v)) })
-              }
+              onChange={(v) => upd({ subFlashes: Math.max(0, Math.min(1, v)) })}
               formatValue={(v) => v.toFixed(2)}
             />
             <RangeRow
-              label={`Span${KF}`}
-              labelActive={plotChannel === "span"}
-              onLabelClick={() => setPlotChannel("span")}
+              label="Span"
               min={0}
               max={1}
               step={0.01}
-              low={Math.min(1, anim.minSpanScale)}
-              high={anim.spanScale}
+              low={Math.min(1, lightning.minSpanScale)}
+              high={lightning.spanScale}
               onChange={(lo, hi) =>
-                patchAnim({ minSpanScale: lo, spanScale: hi })
+                upd({
+                  minSpanScale: Math.max(0, Math.min(lo, hi)),
+                  spanScale: Math.max(lo, Math.min(1, hi)),
+                })
               }
               format={(lo, hi) => `${lo.toFixed(2)} – ${hi.toFixed(2)}`}
             />
@@ -539,53 +360,6 @@ export function LightningPanel({ visible = true }: { visible?: boolean }) {
               onChange={(v) => upd({ simFps: Math.round(v) })}
               formatValue={(v) => `${v.toFixed(0)} fps`}
             />
-          </div>
-          <div style={colStyle}>
-            <div
-              style={{
-                borderBottom: "1px solid rgba(255,255,255,0.1)",
-                marginBottom: 4,
-                paddingBottom: 4,
-              }}
-            >
-              <div style={{ fontSize: 10, opacity: 0.7, marginBottom: 4 }}>
-                Active window (24h)
-              </div>
-              <SliderRow
-                label="Start hour"
-                value={lightning.activeStartHour}
-                min={0}
-                max={24}
-                step={0.25}
-                onChange={(v) => upd({ activeStartHour: v % 24 })}
-                formatValue={(v) => `${v.toFixed(2)}h`}
-              />
-              <SliderRow
-                label="End hour"
-                value={lightning.activeEndHour}
-                min={0}
-                max={24}
-                step={0.25}
-                onChange={(v) => upd({ activeEndHour: v % 24 })}
-                formatValue={(v) => `${v.toFixed(2)}h`}
-              />
-            </div>
-          </div>
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
-              minWidth: 0,
-              height: 0,
-              minHeight: "100%",
-              overflow: "hidden",
-              borderLeft: "1px solid rgba(255,255,255,0.08)",
-              paddingLeft: 10,
-            }}
-          >
-            <SpriteSamplesColumn lightning={lightning} upd={upd} />
-          </div>
         </div>
       </div>
     </div>
@@ -1702,7 +1476,7 @@ const panelStyle: React.CSSProperties = {
   bottom: 60,
   right: 12,
   zIndex: 15,
-  width: 920,
+  width: 380,
   background: "rgba(10, 12, 20, 0.82)",
   backdropFilter: "blur(8px)",
   color: "rgba(207,214,230,0.95)",

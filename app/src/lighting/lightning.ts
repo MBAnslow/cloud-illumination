@@ -6,6 +6,7 @@ import type {
   LightningKeyframe,
   LightningPalette,
   LightningParams,
+  LightningVolume,
 } from "../state";
 import {
   applyCloudTransform,
@@ -13,6 +14,11 @@ import {
   type CloudTransform,
 } from "../scene/cloudTransform";
 import { hexToVec3 } from "./shade";
+import {
+  sampleSurfaceBranches,
+  sampleSurfacePolyline,
+} from "./lightningSurface";
+import { srgbChannelToLinear } from "./ledColor";
 import {
   ensureSpriteImage,
   getCachedSpriteImage,
@@ -170,15 +176,20 @@ function paletteColorStops(
   [number, number, number],
   [number, number, number],
 ] {
-  return [hexToVec3(palette[0]), hexToVec3(palette[1]), hexToVec3(palette[2])];
+  return [linearHex(palette[0]), linearHex(palette[1]), linearHex(palette[2])];
+}
+
+function linearHex(hex: string): [number, number, number] {
+  const [r, g, b] = hexToVec3(hex);
+  return [srgbChannelToLinear(r), srgbChannelToLinear(g), srgbChannelToLinear(b)];
 }
 
 function paletteTintRgb(
   palette: LightningPalette,
 ): [number, number, number] {
-  const c0 = hexToVec3(palette[0]);
-  const c1 = hexToVec3(palette[1]);
-  const c2 = hexToVec3(palette[2]);
+  const c0 = linearHex(palette[0]);
+  const c1 = linearHex(palette[1]);
+  const c2 = linearHex(palette[2]);
   return [
     (c0[0] + c1[0] + c2[0]) / 3,
     (c0[1] + c1[1] + c2[1]) / 3,
@@ -226,312 +237,29 @@ function sampleColorRamp(
  */
 export const LIGHTNING_REFERENCE_RADIUS = 1;
 
-/**
- * Sample a random point within the ellipsoid while distributing samples
- * evenly by height. A uniform-volume sphere strongly favours its wide middle,
- * making flashes near the narrow cloud base/apex needlessly rare.
- */
-function samplePointInEllipsoid(
-  ellipsoid: EllipsoidParams,
-  spanScale: number,
-): [number, number, number] {
-  const y = rand() * 2 - 1;
-  const sliceRadius = Math.sqrt(Math.max(0, 1 - y * y));
-  const radial = Math.sqrt(rand()) * sliceRadius;
-  const angle = rand() * Math.PI * 2;
-  return [
-    Math.cos(angle) * radial * ellipsoid.rx * spanScale,
-    y * ellipsoid.ry * spanScale,
-    Math.sin(angle) * radial * ellipsoid.rz * spanScale,
+/** Cuboid in the scaled layout space bolts are sampled in. */
+export function lightningVolumeBox(
+  volume: LightningVolume,
+  meshScale: number,
+): { center: [number, number, number]; half: [number, number, number]; fit: number } {
+  const absScale = Math.abs(meshScale);
+  const half: [number, number, number] = [
+    Math.max(1e-3, volume.size[0] * 0.5 * absScale),
+    Math.max(1e-3, volume.size[1] * 0.5 * absScale),
+    Math.max(1e-3, volume.size[2] * 0.5 * absScale),
   ];
-}
-
-/**
- * Generate a jagged 3D polyline between two random endpoints. Midpoints
- * are perturbed laterally (perpendicular to the endpoint-endpoint axis)
- * for a lightning-like silhouette.
- */
-function sampleBoltPath(
-  ellipsoid: EllipsoidParams,
-  transform: CloudTransform,
-  segments: number,
-  jitter: number,
-  spanScale: number,
-  minSpanScale: number,
-  sampleSurfacePoint?: () => [number, number, number] | null,
-): Float32Array {
-  const meanR = (ellipsoid.rx + ellipsoid.ry + ellipsoid.rz) / 3;
-  const minLen = Math.max(0, minSpanScale) * meanR;
-  const samplePoint = () =>
-    sampleSurfacePoint?.() ?? samplePointInEllipsoid(ellipsoid, spanScale);
-  let a = samplePoint();
-  let b = samplePoint();
-  // Resample until the endpoints are at least `minLen` apart so bolts
-  // don't degenerate into a tiny spark. Bounded retries so a degenerate
-  // ellipsoid or overly-strict minimum can't spin forever.
-  for (let tries = 0; tries < 12; tries++) {
-    const ddx = b[0] - a[0];
-    const ddy = b[1] - a[1];
-    const ddz = b[2] - a[2];
-    if (ddx * ddx + ddy * ddy + ddz * ddz >= minLen * minLen) break;
-    a = samplePoint();
-    b = samplePoint();
-  }
-  const ax = a[0];
-  const ay = a[1];
-  const az = a[2];
-  const bx = b[0];
-  const by = b[1];
-  const bz = b[2];
-  const dx = bx - ax;
-  const dy = by - ay;
-  const dz = bz - az;
-  const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
-  // Pick an arbitrary vector not parallel to d, then build two lateral basis
-  // vectors u, v orthogonal to d for perpendicular jitter.
-  const nx = dx / len;
-  const ny = dy / len;
-  const nz = dz / len;
-  const helper: [number, number, number] =
-    Math.abs(ny) < 0.9 ? [0, 1, 0] : [1, 0, 0];
-  const ux = ny * helper[2] - nz * helper[1];
-  const uy = nz * helper[0] - nx * helper[2];
-  const uz = nx * helper[1] - ny * helper[0];
-  const uLen = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1;
-  const ux2 = ux / uLen;
-  const uy2 = uy / uLen;
-  const uz2 = uz / uLen;
-  const vx = ny * uz2 - nz * uy2;
-  const vy = nz * ux2 - nx * uz2;
-  const vz = nx * uy2 - ny * ux2;
-
-  const count = Math.max(2, Math.floor(segments) + 1);
-  const path = new Float32Array(count * 3);
-  // High-frequency jaggedness (per-vertex noise).
-  const lateral = jitter * len * 0.35;
-  // Low-frequency wander so the bolt curves left/right/up/down along
-  // its length rather than just zig-zagging along a straight axis.
-  // Random amplitude, phase and 1..3 half-waves per bolt in each of
-  // the two lateral basis directions.
-  const waveAmpU = (rand() * 2 - 1) * jitter * len * 0.6;
-  const waveAmpV = (rand() * 2 - 1) * jitter * len * 0.6;
-  const waveFreqU = 1 + Math.floor(rand() * 3);
-  const waveFreqV = 1 + Math.floor(rand() * 3);
-  const wavePhaseU = rand() * Math.PI * 2;
-  const wavePhaseV = rand() * Math.PI * 2;
-  for (let i = 0; i < count; i++) {
-    const t = i / (count - 1);
-    // Weight everything with sin(pi t) so endpoints stay anchored.
-    const anchor = Math.sin(t * Math.PI);
-    const w = anchor * lateral;
-    const jitU = (rand() * 2 - 1) * w;
-    const jitV = (rand() * 2 - 1) * w;
-    const waveU = Math.sin(t * Math.PI * waveFreqU + wavePhaseU) * waveAmpU * anchor;
-    const waveV = Math.sin(t * Math.PI * waveFreqV + wavePhaseV) * waveAmpV * anchor;
-    const ru = jitU + waveU;
-    const rv = jitV + waveV;
-    const px = ax + dx * t + ux2 * ru + vx * rv;
-    const py = ay + dy * t + uy2 * ru + vy * rv;
-    const pz = az + dz * t + uz2 * ru + vz * rv;
-    const world = applyCloudTransform([px, py, pz], transform);
-    const idx = i * 3;
-    path[idx] = world[0];
-    path[idx + 1] = world[1];
-    path[idx + 2] = world[2];
-  }
-  return path;
-}
-
-/**
- * Cloud-to-ground bolt: starts near the cloud apex and drives down to
- * ground below the cloud volume. Built in cloud-local space then
- * transformed so it tracks tilt/yaw/offset with the mesh.
- */
-function sampleGroundStrikePath(
-  ellipsoid: EllipsoidParams,
-  transform: CloudTransform,
-  segments: number,
-  jitter: number,
-): Float32Array {
-  const rx = Math.max(1e-3, ellipsoid.rx);
-  const ry = Math.max(1e-3, ellipsoid.ry);
-  const rz = Math.max(1e-3, ellipsoid.rz);
-
-  // Apex: near the top of the ellipsoid, slight lateral scatter.
-  const topX = (rand() * 2 - 1) * rx * 0.35;
-  const topY = ry * (0.82 + rand() * 0.16);
-  const topZ = (rand() * 2 - 1) * rz * 0.35;
-
-  // Ground: well below the cloud underside, offset laterally so the
-  // bolt doesn't always drop straight down the axis.
-  const groundX = topX + (rand() * 2 - 1) * rx * 0.55;
-  const groundY = -ry * (1.35 + rand() * 0.55);
-  const groundZ = topZ + (rand() * 2 - 1) * rz * 0.55;
-
-  const ax = topX;
-  const ay = topY;
-  const az = topZ;
-  const bx = groundX;
-  const by = groundY;
-  const bz = groundZ;
-  const dx = bx - ax;
-  const dy = by - ay;
-  const dz = bz - az;
-  const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
-  const nx = dx / len;
-  const ny = dy / len;
-  const nz = dz / len;
-  const helper: [number, number, number] =
-    Math.abs(ny) < 0.9 ? [0, 1, 0] : [1, 0, 0];
-  const ux = ny * helper[2] - nz * helper[1];
-  const uy = nz * helper[0] - nx * helper[2];
-  const uz = nx * helper[1] - ny * helper[0];
-  const uLen = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1;
-  const ux2 = ux / uLen;
-  const uy2 = uy / uLen;
-  const uz2 = uz / uLen;
-  const vx = ny * uz2 - nz * uy2;
-  const vy = nz * ux2 - nx * uz2;
-  const vz = nx * uy2 - ny * ux2;
-
-  const count = Math.max(3, Math.floor(segments) + 1);
-  const path = new Float32Array(count * 3);
-  const lateral = jitter * len * 0.28;
-  const waveAmpU = (rand() * 2 - 1) * jitter * len * 0.45;
-  const waveAmpV = (rand() * 2 - 1) * jitter * len * 0.45;
-  const waveFreqU = 1 + Math.floor(rand() * 3);
-  const waveFreqV = 1 + Math.floor(rand() * 3);
-  const wavePhaseU = rand() * Math.PI * 2;
-  const wavePhaseV = rand() * Math.PI * 2;
-  for (let i = 0; i < count; i++) {
-    const t = i / (count - 1);
-    const anchor = Math.sin(t * Math.PI);
-    const w = anchor * lateral;
-    const jitU = (rand() * 2 - 1) * w;
-    const jitV = (rand() * 2 - 1) * w;
-    const waveU =
-      Math.sin(t * Math.PI * waveFreqU + wavePhaseU) * waveAmpU * anchor;
-    const waveV =
-      Math.sin(t * Math.PI * waveFreqV + wavePhaseV) * waveAmpV * anchor;
-    const ru = jitU + waveU;
-    const rv = jitV + waveV;
-    const px = ax + dx * t + ux2 * ru + vx * rv;
-    const py = ay + dy * t + uy2 * ru + vy * rv;
-    const pz = az + dz * t + uz2 * ru + vz * rv;
-    const world = applyCloudTransform([px, py, pz], transform);
-    const idx = i * 3;
-    path[idx] = world[0];
-    path[idx + 1] = world[1];
-    path[idx + 2] = world[2];
-  }
-  return path;
-}
-
-/**
- * Spawn weaker side branches off interior vertices of a main bolt path.
- * Each interior vertex forks independently with probability `branchProb`.
- */
-function sampleBranches(
-  mainPath: Float32Array,
-  branchProb: number,
-  jitter: number,
-): BoltBranch[] {
-  const p = Math.max(0, Math.min(1, branchProb));
-  if (p <= 0) return [];
-  const verts = mainPath.length / 3;
-  if (verts < 3) return [];
-
-  const remainingLenFrom = (startVert: number): number => {
-    let total = 0;
-    for (let i = startVert + 1; i < verts; i++) {
-      const j = i * 3;
-      const dx = mainPath[j] - mainPath[j - 3];
-      const dy = mainPath[j + 1] - mainPath[j - 2];
-      const dz = mainPath[j + 2] - mainPath[j - 1];
-      total += Math.sqrt(dx * dx + dy * dy + dz * dz);
-    }
-    return total;
+  const mean = (half[0] + half[1] + half[2]) / 3;
+  return {
+    center: [
+      volume.center[0] * meshScale,
+      volume.center[1] * meshScale,
+      volume.center[2] * meshScale,
+    ],
+    half,
+    fit: mean / LIGHTNING_REFERENCE_RADIUS,
   };
-
-  const branches: BoltBranch[] = [];
-  // Skip endpoints so forks sit on "branching segments" of the stroke.
-  for (let vi = 1; vi < verts - 1; vi++) {
-    if (rand() >= p) continue;
-
-    const i3 = vi * 3;
-    const ox = mainPath[i3];
-    const oy = mainPath[i3 + 1];
-    const oz = mainPath[i3 + 2];
-
-    // Local tangent along the main bolt at this vertex.
-    const prev3 = (vi - 1) * 3;
-    const next3 = (vi + 1) * 3;
-    let tx = mainPath[next3] - mainPath[prev3];
-    let ty = mainPath[next3 + 1] - mainPath[prev3 + 1];
-    let tz = mainPath[next3 + 2] - mainPath[prev3 + 2];
-    const tLen = Math.sqrt(tx * tx + ty * ty + tz * tz) || 1;
-    tx /= tLen;
-    ty /= tLen;
-    tz /= tLen;
-
-    // Orthonormal lateral basis perpendicular to the tangent.
-    const helper: [number, number, number] =
-      Math.abs(ty) < 0.9 ? [0, 1, 0] : [1, 0, 0];
-    let ux = ty * helper[2] - tz * helper[1];
-    let uy = tz * helper[0] - tx * helper[2];
-    let uz = tx * helper[1] - ty * helper[0];
-    const uLen = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1;
-    ux /= uLen;
-    uy /= uLen;
-    uz /= uLen;
-    const vx = ty * uz - tz * uy;
-    const vy = tz * ux - tx * uz;
-    const vz = tx * uy - ty * ux;
-
-    // Prefer a mostly lateral direction so the branch peels off the main.
-    const sideU = rand() * 2 - 1;
-    const sideV = rand() * 2 - 1;
-    const sideN = Math.sqrt(sideU * sideU + sideV * sideV) || 1;
-    const latU = sideU / sideN;
-    const latV = sideV / sideN;
-    // Mix a little forward so branches aren't perfectly perpendicular.
-    const forward = 0.25 + rand() * 0.35;
-    let dx = tx * forward + ux * latU * (1 - forward) + vx * latV * (1 - forward);
-    let dy = ty * forward + uy * latU * (1 - forward) + vy * latV * (1 - forward);
-    let dz = tz * forward + uz * latU * (1 - forward) + vz * latV * (1 - forward);
-    const dLen = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
-    dx /= dLen;
-    dy /= dLen;
-    dz /= dLen;
-
-    const remain = remainingLenFrom(vi);
-    const branchLen = Math.max(0.05, remain * (0.25 + rand() * 0.2));
-    const segs = 2 + Math.floor(rand() * 3); // 2..4
-    const count = segs + 1;
-    const path = new Float32Array(count * 3);
-    const lateral = jitter * branchLen * 0.4;
-    path[0] = ox;
-    path[1] = oy;
-    path[2] = oz;
-    for (let k = 1; k < count; k++) {
-      const t = k / (count - 1);
-      const anchor = Math.sin(t * Math.PI);
-      const w = anchor * lateral;
-      const jitU = (rand() * 2 - 1) * w;
-      const jitV = (rand() * 2 - 1) * w;
-      path[k * 3] = ox + dx * branchLen * t + ux * jitU + vx * jitV;
-      path[k * 3 + 1] = oy + dy * branchLen * t + uy * jitU + vy * jitV;
-      path[k * 3 + 2] = oz + dz * branchLen * t + uz * jitU + vz * jitV;
-    }
-
-    branches.push({
-      path,
-      strength: 0.45 + rand() * 0.2,
-      forkVertex: vi,
-    });
-  }
-  return branches;
 }
+
 
 /**
  * Sum of segment lengths of a packed `[x, y, z, x, y, z, ...]` polyline
@@ -989,6 +717,29 @@ export function spriteFlashEnvelope(sprite: SpriteFlash, nowMs: number): number 
   return flashBrightness(age / sprite.durationMs);
 }
 
+/** Bolt settings used whenever lightning is enabled. No sky-clock ramp. */
+function constantLightning(params: LightningParams): LightningAnimParams {
+  const duty = Math.max(0.05, Math.min(0.95, params.spriteStrobeDuty || 0.45));
+  return {
+    intensityRange: [
+      params.intensityRange?.[0] ?? 0.9,
+      params.intensityRange?.[1] ?? 1.5,
+    ],
+    strikesPerMinute: params.strikesPerMinute,
+    strikePerMinute: params.strikePerMinute,
+    spritesPerMinute: 0,
+    spriteStrobeDutyRange: [duty, duty],
+    subFlashes: params.subFlashes,
+    spanScale: params.spanScale,
+    minSpanScale: params.minSpanScale,
+    boltGain: params.boltGain,
+    spriteGain: 0,
+    backgroundGain: params.backgroundGain,
+    thunderDelayMs: params.thunderDelayMs,
+    pan: params.pan,
+  };
+}
+
 /**
  * Stateful controller that maintains active strikes and produces a
  * per-LED additive RGB contribution each frame.
@@ -1082,25 +833,15 @@ export class LightningController {
       this.spawnAccSprite = 0;
     }
 
-    // Warm sprite image cache for uploaded library entries.
-    for (const s of params.spriteSamples ?? []) {
-      void ensureSpriteImage(s.id);
-    }
-
-    // Storm keyframes track the sky timeline within the active window
-    // (which value of SPM to use). Accrual itself is always real
-    // wall-clock time via performance.now() — not sky/sim minutes.
-    const live = sampleLightningKeyframe(params.keyframes, keyframeU);
+    // Rates stay constant while lightning is enabled. They do not follow
+    // the sky clock.
+    const live = constantLightning(params);
     const cloudSpm = Number.isFinite(live.strikesPerMinute)
       ? Math.max(0, Math.min(40, live.strikesPerMinute))
       : Math.max(0, Math.min(40, Number(params.strikesPerMinute) || 0));
     const groundSpm = Number.isFinite(live.strikePerMinute)
       ? Math.max(0, Math.min(40, live.strikePerMinute))
       : Math.max(0, Math.min(40, Number(params.strikePerMinute) || 0));
-    const spriteSpm = Number.isFinite(live.spritesPerMinute)
-      ? Math.max(0, Math.min(40, live.spritesPerMinute))
-      : Math.max(0, Math.min(40, Number(params.spritesPerMinute) || 0));
-
     const spawnCount = (acc: number, spm: number): { next: number; n: number } => {
       const ratePerMs = spm / 60_000;
       let next = Math.min(8, acc + ratePerMs * dtMs);
@@ -1120,11 +861,8 @@ export class LightningController {
       ? spawnCount(this.spawnAccStrike, groundSpm)
       : { next: 0, n: 0 };
     this.spawnAccStrike = ground.next;
-    const spriteN =
-      automaticEnabled && (params.spriteSamples?.length ?? 0) > 0
-        ? spawnCount(this.spawnAccSprite, spriteSpm)
-        : { next: 0, n: 0 };
-    this.spawnAccSprite = spriteN.next;
+    this.spawnAccSprite = 0;
+    this.sprites = [];
 
     const segs = Math.max(2, Math.floor(params.boltSegments));
     for (let i = 0; i < cloud.n + manualCloud; i++) {
@@ -1152,9 +890,6 @@ export class LightningController {
         keyframeU,
         sampleSurfacePoint,
       );
-    }
-    for (let i = 0; i < spriteN.n + manualSprite; i++) {
-      this.pushSprite(nowMs, params, live);
     }
   }
 
@@ -1216,39 +951,59 @@ export class LightningController {
     const intensity = Math.max(0, mapIntensity01(intensityRange, intensity01));
     const spanHi = Math.max(0.05, Math.min(1, live.spanScale));
     const spanLo = Math.max(0, Math.min(spanHi, live.minSpanScale));
-    const path =
-      kind === "strike"
-        ? sampleGroundStrikePath(ellipsoid, transform, segs + 4, jitter)
-        : sampleBoltPath(
-            ellipsoid,
-            transform,
-            segs,
-            jitter,
-            spanHi,
-            spanLo,
-            sampleSurfacePoint,
-          );
+    const localBolt = sampleSurfacePolyline(
+      ellipsoid,
+      kind === "strike" ? segs + 4 : segs,
+      jitter,
+      kind === "strike" ? 1 : spanHi,
+      kind === "strike" ? 0 : spanLo,
+      kind === "strike",
+    );
+    const path = new Float32Array(localBolt.points.length * 3);
+    for (let i = 0; i < localBolt.points.length; i++) {
+      const world = applyCloudTransform(localBolt.points[i], transform);
+      path[i * 3] = world[0];
+      path[i * 3 + 1] = world[1];
+      path[i * 3 + 2] = world[2];
+    }
     // Flash duration is derived from the actual polyline length and a
     // per-strike sampled travel speed. Longer bolts and slower speeds
     // → longer flashes. The `* 4` keeps the existing 25% travel /
     // 75% fade envelope split intact.
     // Ground strikes travel faster (more "force") but are much longer,
     // so the flash still reads as a powerful event.
-    const speedBase = Math.max(0.05, sampleRange(params.travelSpeedRange));
+    const speedBase = Math.max(
+      0.1,
+      Math.min(1, sampleRange(params.travelSpeedRange)),
+    );
     const speed = kind === "strike" ? speedBase * 2.2 : speedBase;
     const pathLen = polylineLength(path);
     const travelMsRaw = (pathLen / speed) * 1000;
     const duration = Math.max(30, travelMsRaw * 4);
     const branchProb = Math.max(0, Math.min(1, live.subFlashes));
     // Ground strikes branch a bit less often — force is in the trunk + flood.
-    const branches = sampleBranches(
-      path,
+    const branches = sampleSurfaceBranches(
+      localBolt,
       kind === "strike" ? branchProb * 0.55 : branchProb,
       jitter,
-    );
+      ellipsoid,
+    ).map((branch) => {
+      const branchPath = new Float32Array(branch.path.length * 3);
+      for (let i = 0; i < branch.path.length; i++) {
+        const world = applyCloudTransform(branch.path[i], transform);
+        branchPath[i * 3] = world[0];
+        branchPath[i * 3 + 1] = world[1];
+        branchPath[i * 3 + 2] = world[2];
+      }
+      return {
+        path: branchPath,
+        strength: branch.strength,
+        forkVertex: branch.forkVertex,
+      };
+    });
     const boltGain =
       Math.max(0, live.boltGain) * (kind === "strike" ? 1.6 : 1);
-    const palette = sampleLightningColorTracks(params.colors, keyframeU);
+    const palette = sampleLightningColorTracks(params.colors, 0);
     this.strikes.push({
       bornMs: nowMs,
       durationMs: duration,

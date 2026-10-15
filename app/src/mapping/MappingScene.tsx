@@ -21,7 +21,11 @@ import {
 import { useSimStore, type Vec3 } from "../state";
 import { ArchBacking } from "../scene/ArchBacking";
 import { applyMappingOrientationPoint } from "./geometry";
-import { archBackingMesh, DUAL_32X8_SLOTTED } from "./ledLayout";
+import {
+  archBackingMesh,
+  DUAL_32X8_SLOTTED,
+  projectArchHitToOuterSurface,
+} from "./ledLayout";
 import {
   buildBakedDomeSurface,
   DOME_FOOTPRINT_SCALE,
@@ -38,7 +42,7 @@ import {
   spotConeAttenuation,
   spreadToSpotAngle,
 } from "../lighting/shade";
-import { encodeLedRgb, srgbByteToLinear } from "../lighting/ledColor";
+import { encodeLedRgb, srgbChannelToLinear } from "../lighting/ledColor";
 import {
   clearBakedSurfaceGeometry,
   getBakedSurfaceGeometry,
@@ -455,9 +459,9 @@ export function MappingScene({
       now - lastMappingSendRef.current >= 1000 / Math.max(1, wled.fps);
     if (!previewDue && !streamDue) return;
     const packedColor = Number.parseInt(mapping.mappingLightColor.slice(1), 16);
-    const outputR = (packedColor >> 16) & 255;
-    const outputG = (packedColor >> 8) & 255;
-    const outputB = packedColor & 255;
+    const outputR = srgbChannelToLinear(((packedColor >> 16) & 255) / 255);
+    const outputG = srgbChannelToLinear(((packedColor >> 8) & 255) / 255);
+    const outputB = srgbChannelToLinear((packedColor & 255) / 255);
     if (outputLevelsRef.current.length !== mapping.leds.length) {
       outputLevelsRef.current = new Float32Array(mapping.leds.length);
     }
@@ -630,9 +634,9 @@ export function MappingScene({
       );
       outputLevelsRef.current[physicalIndex] = level;
       const [red, green, blue] = encodeLedRgb(
-        level * (outputR / 255),
-        level * (outputG / 255),
-        level * (outputB / 255),
+        level * outputR,
+        level * outputG,
+        level * outputB,
         strand.colorProfile,
       );
       bytes[outIndex * 3] = red;
@@ -640,11 +644,7 @@ export function MappingScene({
       bytes[outIndex * 3 + 2] = blue;
       const material = outputMaterialRefs.current[physicalIndex];
       if (previewDue && material) {
-        material.color.setRGB(
-          srgbByteToLinear(red),
-          srgbByteToLinear(green),
-          srgbByteToLinear(blue),
-        );
+        material.color.setRGB(red / 255, green / 255, blue / 255);
         material.emissive.copy(material.color);
         material.emissiveIntensity = 1;
       }
@@ -772,18 +772,26 @@ export function MappingScene({
     worldPos: Vec3;
     worldNormal: Vec3;
     dir: Vec3;
+    /** Arch geometry space. Stored as-is; the read path applies flips. */
+    archLayout: boolean;
   } | null => {
     if (!e.face || !e.object) return null;
     e.object.updateMatrixWorld();
     const localVec = e.object.worldToLocal(
       new Vector3(e.point.x, e.point.y, e.point.z),
     );
-    const localPos: Vec3 = [localVec.x, localVec.y, localVec.z];
-    const localNormal: Vec3 = [
+    let localPos: Vec3 = [localVec.x, localVec.y, localVec.z];
+    let localNormal: Vec3 = [
       e.face.normal.x,
       e.face.normal.y,
       e.face.normal.z,
     ];
+    const archLayout = e.object.userData.archSurface === true;
+    if (archLayout && e.object instanceof Mesh) {
+      const outer = projectArchHitToOuterSurface(e.object.geometry, e.face, localPos);
+      localPos = outer.pos;
+      localNormal = outer.normal;
+    }
     const nMat = new Matrix3().getNormalMatrix(e.object.matrixWorld);
     const wn = new Vector3(
       e.face.normal.x,
@@ -796,7 +804,30 @@ export function MappingScene({
     const worldNormal: Vec3 = [wn.x, wn.y, wn.z];
     const l = Math.hypot(worldPos[0], worldPos[1], worldPos[2]) || 1;
     const dir: Vec3 = [worldPos[0] / l, worldPos[1] / l, worldPos[2] / l];
-    return { localPos, localNormal, worldPos, worldNormal, dir };
+    return { localPos, localNormal, worldPos, worldNormal, dir, archLayout };
+  };
+
+  // Cloud-mesh hits are stored flipped, because that mesh is not inside
+  // the flip group. Arch hits are already in layout space, same as the
+  // generated LED positions, and the display applies the flip once.
+  const storedSurfacePoint = (hit: {
+    localPos: Vec3;
+    localNormal: Vec3;
+    archLayout: boolean;
+  }): { pos: Vec3; normal: Vec3 } => {
+    if (hit.archLayout) return { pos: hit.localPos, normal: hit.localNormal };
+    return {
+      pos: applyMappingOrientationPoint(
+        hit.localPos,
+        mapping.flipUpDown,
+        mapping.flipLeftRight,
+      ),
+      normal: applyMappingOrientationPoint(
+        hit.localNormal,
+        mapping.flipUpDown,
+        mapping.flipLeftRight,
+      ),
+    };
   };
 
   // Previous bead's world-space position (after flips + normal offset),
@@ -842,26 +873,20 @@ export function MappingScene({
     if (!hit) return;
 
     if (isGaussianTool) {
-      const dispPos = applyMappingOrientationPoint(
-        hit.localPos,
-        mapping.flipUpDown,
-        mapping.flipLeftRight,
-      );
-      const dispNrm = applyMappingOrientationPoint(
-        hit.localNormal,
-        mapping.flipUpDown,
-        mapping.flipLeftRight,
-      );
-      // Store un-flipped? LEDs store after flip application on write.
-      // Same as LED place: store flipped coords.
+      const stored = storedSurfacePoint(hit);
       const id = `gaussian-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36)}`;
+      // Arch strips are only a few centimetres across, so a new dome
+      // starts small enough to sit on that surface. Cloud hits keep the
+      // larger default used for a full mesh.
+      const archRadius = Math.max(0.01, mapping.layoutPitch * 2.5);
+      const archWidth = archRadius / DOME_FOOTPRINT_SCALE;
       addMappingGaussian({
         id,
-        pos: dispPos,
-        normal: dispNrm,
-        amplitude: 0.05,
-        width: 0.08,
-        height: 0.08,
+        pos: stored.pos,
+        normal: stored.normal,
+        amplitude: hit.archLayout ? Math.max(0.004, mapping.layoutPitch * 0.8) : 0.05,
+        width: hit.archLayout ? archWidth : 0.08,
+        height: hit.archLayout ? archWidth : 0.08,
         rotationDeg: 0,
       });
       setSelectedGaussianId(id);
@@ -906,17 +931,8 @@ export function MappingScene({
     const gaussId = gaussianDragIdRef.current;
     if (gaussId !== null) {
       e.stopPropagation();
-      const dispPos = applyMappingOrientationPoint(
-        hit.localPos,
-        mapping.flipUpDown,
-        mapping.flipLeftRight,
-      );
-      const dispNrm = applyMappingOrientationPoint(
-        hit.localNormal,
-        mapping.flipUpDown,
-        mapping.flipLeftRight,
-      );
-      updateMappingGaussian(gaussId, { pos: dispPos, normal: dispNrm });
+      const stored = storedSurfacePoint(hit);
+      updateMappingGaussian(gaussId, { pos: stored.pos, normal: stored.normal });
       return;
     }
 
@@ -984,7 +1000,18 @@ export function MappingScene({
         <meshBasicMaterial color={mapping.mappingLightColor} toneMapped={false} />
       </mesh>
 
-      <ArchBacking />
+      <ArchBacking
+        pickable={isGaussianTool}
+        onPointerDown={(e) => {
+          downPosRef.current = {
+            x: e.nativeEvent.clientX,
+            y: e.nativeEvent.clientY,
+          };
+        }}
+        onClick={onSurfaceClick}
+        onPointerMove={onSurfacePointerMove}
+        onPointerOut={() => setHover(null)}
+      />
       <CoordinateGrid />
       <axesHelper args={[0.5]} />
 
@@ -1042,7 +1069,12 @@ export function MappingScene({
       )}
 
       {linePoints.length >= 2 && (
-        <Line points={linePoints} color="#7f8ca3" lineWidth={1.5} />
+        <Line
+          points={linePoints}
+          color="#7f8ca3"
+          lineWidth={1.5}
+          raycast={isGaussianTool ? () => null : undefined}
+        />
       )}
 
       {hover && draggingRef.current === null && isPlaceTool && (() => {
@@ -1104,6 +1136,7 @@ export function MappingScene({
             <mesh
               position={pos}
               quaternion={quat}
+              raycast={isGaussianTool ? () => null : Mesh.prototype.raycast}
               onPointerDown={(e) => {
                 if (isGaussianTool) return;
                 if (!facesCamera(pos, normal)) return;
@@ -1161,16 +1194,12 @@ export function MappingScene({
                     16,
                   );
                   const [red, green, blue] = encodeLedRgb(
-                    level * (((packed >> 16) & 255) / 255),
-                    level * (((packed >> 8) & 255) / 255),
-                    level * ((packed & 255) / 255),
+                    level * srgbChannelToLinear(((packed >> 16) & 255) / 255),
+                    level * srgbChannelToLinear(((packed >> 8) & 255) / 255),
+                    level * srgbChannelToLinear((packed & 255) / 255),
                     strand.colorProfile,
                   );
-                  material.color.setRGB(
-                    srgbByteToLinear(red),
-                    srgbByteToLinear(green),
-                    srgbByteToLinear(blue),
-                  );
+                  material.color.setRGB(red / 255, green / 255, blue / 255);
                   material.emissive.copy(material.color);
                   material.emissiveIntensity = 1;
                 }}
@@ -1182,6 +1211,7 @@ export function MappingScene({
             </mesh>
             <Billboard position={labelPos}>
               <Text
+                raycast={isGaussianTool ? () => null : undefined}
                 fontSize={mapping.ledSize * 2.6}
                 color={isSelected ? "#ffffff" : "#cfd6e6"}
                 anchorX="center"

@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react";
-import { DoubleSide } from "three";
+import type { ThreeEvent } from "@react-three/fiber";
+import { DoubleSide, Mesh } from "three";
 import { useSimStore } from "../state";
 import { buildArchBackingGeometry, DUAL_32X8_SLOTTED } from "../mapping/ledLayout";
 
@@ -9,7 +10,22 @@ import { buildArchBackingGeometry, DUAL_32X8_SLOTTED } from "../mapping/ledLayou
  * `includeCloud` matches the simulator, which also swings the arches with
  * the cloud. The mapping view only follows the mesh transform.
  */
-export function ArchBacking({ includeCloud = false }: { includeCloud?: boolean }) {
+export function ArchBacking({
+  includeCloud = false,
+  pickable = false,
+  onPointerDown,
+  onClick,
+  onPointerMove,
+  onPointerOut,
+}: {
+  includeCloud?: boolean;
+  /** When set, the strip receives pointer hits so domes can be placed on it. */
+  pickable?: boolean;
+  onPointerDown?: (event: ThreeEvent<PointerEvent>) => void;
+  onClick?: (event: ThreeEvent<MouseEvent>) => void;
+  onPointerMove?: (event: ThreeEvent<PointerEvent>) => void;
+  onPointerOut?: (event: ThreeEvent<PointerEvent>) => void;
+}) {
   const layout = useSimStore((s) => s.mapping.layout);
   const pitch = useSimStore((s) => s.mapping.layoutPitch);
   const archPlacements = useSimStore((s) => s.mapping.archPlacements);
@@ -37,7 +53,15 @@ export function ArchBacking({ includeCloud = false }: { includeCloud?: boolean }
       scale={mesh.scale}
     >
       <group scale={[flipLeftRight ? -1 : 1, flipUpDown ? -1 : 1, 1]}>
-        <mesh geometry={geometry} raycast={() => null}>
+        <mesh
+          geometry={geometry}
+          userData={{ archSurface: true }}
+          raycast={pickable ? Mesh.prototype.raycast : () => null}
+          onPointerDown={pickable ? onPointerDown : undefined}
+          onClick={pickable ? onClick : undefined}
+          onPointerMove={pickable ? onPointerMove : undefined}
+          onPointerOut={pickable ? onPointerOut : undefined}
+        >
           <meshStandardMaterial
             color="#14161c"
             roughness={0.9}

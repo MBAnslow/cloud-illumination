@@ -31,6 +31,25 @@ function clamp01(value: number): number {
   return value < 0 ? 0 : value > 1 ? 1 : value;
 }
 
+/** sRGB code value in [0,1] to linear light. LED PWM follows linear light. */
+export function srgbChannelToLinear(value: number): number {
+  const v = clamp01(value);
+  return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+}
+
+/** Linear light in [0,1] to an sRGB byte, for on-screen previews. */
+export function linearChannelToSrgbByte(value: number): number {
+  const v = clamp01(value);
+  const encoded =
+    v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+  return Math.round(clamp01(encoded) * 255);
+}
+
+/**
+ * Linear-light RGB in [0,1] to LED PWM bytes. The brightness curve scales
+ * all channels together so the hue stays put. WS2812 PWM is linear, so
+ * these bytes are linear light, not sRGB codes.
+ */
 export function encodeLedRgb(
   red: number,
   green: number,
@@ -55,9 +74,6 @@ export function encodeLedRgb(
 }
 
 export function srgbByteToLinear(byte: number): number {
-  const value = clamp01(byte / 255);
-  return value <= 0.04045
-    ? value / 12.92
-    : Math.pow((value + 0.055) / 1.055, 2.4);
+  return srgbChannelToLinear(byte / 255);
 }
 

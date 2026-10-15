@@ -17,10 +17,11 @@ import {
 } from "three";
 import { applyMappingOrientationPoint } from "../mapping/geometry";
 import {
-  archLayoutBounds,
   archBackingMesh,
+  archShapeRadius,
   DUAL_32X8_SLOTTED,
 } from "../mapping/ledLayout";
+import { lightningVolumeWorldMatrix } from "./lightningVolumeTransform";
 import {
   displaceLed,
   gaussianRayTransmission,
@@ -29,7 +30,6 @@ import {
 import {
   getMeshHalfExtents,
   loadMeshGeometry,
-  sampleMeshSurfacePoint,
 } from "../mapping/meshAsset";
 import {
   alignMarkerNormal,
@@ -40,22 +40,25 @@ import {
 } from "../mapping/markerVisual";
 import {
   hexToVec3,
+  pointLightDistanceAttenuation,
   shadeLeds,
-  spreadToSpotAngle,
+  skySpreadToSpotAngle,
   type ShadeLight,
 } from "../lighting/shade";
-import { activeWindowProgress, hourInRange, useSimStore } from "../state";
+import { useSimStore } from "../state";
 import { computeSkyLighting } from "../lighting/skyCycle";
 import {
-  LIGHTNING_REFERENCE_RADIUS,
+  lightningVolumeBox,
   sharedLightningController,
 } from "../lighting/lightning";
 import { WledStreamClient } from "../wled/client";
 import { publishFrame, publishLedPositions } from "../stream/frameBuffer";
-import {
-  encodeLedRgb,
-  srgbByteToLinear,
-} from "../lighting/ledColor";
+import { encodeLedRgb, srgbChannelToLinear } from "../lighting/ledColor";
+
+function linearHex(hex: string): [number, number, number] {
+  const [r, g, b] = hexToVec3(hex);
+  return [srgbChannelToLinear(r), srgbChannelToLinear(g), srgbChannelToLinear(b)];
+}
 
 function clamp01(v: number): number {
   if (v <= 0) return 0;
@@ -112,7 +115,6 @@ export function Leds() {
   const meshRef = useRef<InstancedMesh>(null);
   const dummy = useMemo(() => new Object3D(), []);
   const tmpColor = useMemo(() => new Color(), []);
-  const boltSurfacePoint = useMemo(() => new Vector3(), []);
   const stableBytesRef = useRef<Uint8Array | null>(null);
   const locatedSet = useMemo(
     () => new Set(ledLocator.highlighted),
@@ -364,40 +366,41 @@ export function Leds() {
     };
   }, [meshTarget.id]);
   const meshOccluder = useMemo(() => (meshGeom ? new Mesh(meshGeom) : null), [meshGeom]);
-  // Bolt and sprite volume follows the arches, in the same scaled layout
-  // space the LEDs use before the cloud rotation. `fit` shrinks the
-  // metre-based glow to that smaller structure.
-  const archLightning = useMemo(() => {
-    if (mapping.layout !== DUAL_32X8_SLOTTED) return null;
-    const bounds = archLayoutBounds(mapping.layoutPitch, mapping.archPlacements);
-    const flipped = applyMappingOrientationPoint(
-      bounds.center,
+  const lightningBox = useMemo(
+    () => lightningVolumeBox(lightning.volume, meshTarget.scale),
+    [lightning.volume, meshTarget.scale],
+  );
+  const lightningVolumeMatrix = useMemo(
+    () =>
+      lightningVolumeWorldMatrix({
+        center: lightning.volume.center,
+        meshScale: meshTarget.scale,
+        meshOffsetY: meshTarget.offsetY,
+        meshYawDeg: meshTarget.yawDeg,
+        meshTiltDeg: meshTarget.tiltDeg,
+        cloudOffsetX: cloud.offsetX,
+        cloudOffsetY: cloud.offsetY,
+        cloudOffsetZ: cloud.offsetZ,
+        cloudRotationXDeg: cloud.rotationXDeg,
+        cloudRotationYDeg: cloud.rotationYDeg,
+        flipUpDown: mapping.flipUpDown,
+        flipLeftRight: mapping.flipLeftRight,
+      }),
+    [
+      lightning.volume.center,
+      meshTarget.scale,
+      meshTarget.offsetY,
+      meshTarget.yawDeg,
+      meshTarget.tiltDeg,
+      cloud.offsetX,
+      cloud.offsetY,
+      cloud.offsetZ,
+      cloud.rotationXDeg,
+      cloud.rotationYDeg,
       mapping.flipUpDown,
       mapping.flipLeftRight,
-    );
-    const scale = meshTarget.scale;
-    const absScale = Math.abs(scale);
-    const rx = Math.max(1e-3, bounds.half[0] * absScale);
-    const ry = Math.max(1e-3, bounds.half[1] * absScale);
-    const rz = Math.max(1e-3, bounds.half[2] * absScale);
-    const mean = (rx + ry + rz) / 3;
-    return {
-      center: [flipped[0] * scale, flipped[1] * scale, flipped[2] * scale] as [
-        number,
-        number,
-        number,
-      ],
-      ellipsoid: { rx, ry, rz },
-      fit: mean / LIGHTNING_REFERENCE_RADIUS,
-    };
-  }, [
-    mapping.layout,
-    mapping.layoutPitch,
-    mapping.archPlacements,
-    mapping.flipUpDown,
-    mapping.flipLeftRight,
-    meshTarget.scale,
-  ]);
+    ],
+  );
   const archOccluder = useMemo(() => {
     if (mapping.layout !== DUAL_32X8_SLOTTED) return null;
     const mesh = archBackingMesh(mapping.layoutPitch, mapping.archPlacements);
@@ -638,7 +641,7 @@ export function Leds() {
       const timeLights: ShadeLight[] = [
         {
           type: "ambient",
-          color: hexToVec3(ambient.color),
+          color: linearHex(ambient.color),
           intensity: ambient.intensity * manualBlend,
         },
       ];
@@ -651,11 +654,33 @@ export function Leds() {
           cloud.offsetY + meshTarget.offsetY,
           cloud.offsetZ,
         ];
+        const decay = Math.max(0, sky.lightDecay ?? 1);
+        // A facing sensor should receive the chosen swatch, not that colour
+        // divided by the orbit distance. Cancel the falloff at the light.
+        const orbitDistance = Math.hypot(
+          skyLighting.sunDirection[0] * orbitRadiusX,
+          skyLighting.sunDirection[1] * orbitRadiusY,
+          skyLighting.sunDirection[2] * orbitRadiusZ,
+        );
+        const distanceScale =
+          1 /
+          Math.max(
+            1e-4,
+            pointLightDistanceAttenuation(orbitDistance, decay, 0),
+          );
+        const shapeRadius =
+          mapping.layout === DUAL_32X8_SLOTTED
+            ? archShapeRadius(
+                mapping.layoutPitch,
+                mapping.archPlacements,
+                meshTarget.scale,
+              )
+            : Math.max(ellipsoid.rx, ellipsoid.ry, ellipsoid.rz);
         timeLights.push(
           {
             type: "hemisphere",
-            skyColor: hexToVec3(skyLighting.skyColor),
-            groundColor: hexToVec3(skyLighting.groundColor),
+            skyColor: linearHex(skyLighting.skyColor),
+            groundColor: linearHex(skyLighting.groundColor),
             intensity: skyLighting.hemiIntensity,
           },
           {
@@ -665,13 +690,17 @@ export function Leds() {
               cloudCenter[1] + skyLighting.sunDirection[1] * orbitRadiusY,
               cloudCenter[2] + skyLighting.sunDirection[2] * orbitRadiusZ,
             ],
-            color: hexToVec3(skyLighting.sunColor),
-            intensity: skyLighting.sunIntensity,
-            decay: Math.max(0, sky.lightDecay ?? 1),
+            color: linearHex(skyLighting.sunColor),
+            intensity: skyLighting.sunIntensity * distanceScale,
+            decay,
             distance: 0,
             spread: clamp01(sky.sunSpread ?? 0.9),
             target: cloudCenter,
-            coneAngle: spreadToSpotAngle(sky.sunSpread ?? 0.9),
+            coneAngle: skySpreadToSpotAngle(
+              sky.sunSpread ?? 0.9,
+              orbitDistance,
+              shapeRadius,
+            ),
             penumbra: clamp01(sky.sunBeamFocus ?? 0.65),
             topHighlightBoost: Math.max(0, sky.sunTopHighlightBoost ?? 0),
             topHighlightFactor: clamp01(
@@ -686,13 +715,17 @@ export function Leds() {
               cloudCenter[1] + skyLighting.moonDirection[1] * orbitRadiusY,
               cloudCenter[2] + skyLighting.moonDirection[2] * orbitRadiusZ,
             ],
-            color: hexToVec3(skyLighting.moonColor),
-            intensity: skyLighting.moonIntensity,
-            decay: Math.max(0, sky.lightDecay ?? 1),
+            color: linearHex(skyLighting.moonColor),
+            intensity: skyLighting.moonIntensity * distanceScale,
+            decay,
             distance: 0,
             spread: clamp01(sky.moonSpread ?? 0.9),
             target: cloudCenter,
-            coneAngle: spreadToSpotAngle(sky.moonSpread ?? 0.9),
+            coneAngle: skySpreadToSpotAngle(
+              sky.moonSpread ?? 0.9,
+              orbitDistance,
+              shapeRadius,
+            ),
             penumbra: clamp01(sky.moonBeamFocus ?? 0.65),
             transmission: buffers.moonTransmission,
           },
@@ -716,17 +749,8 @@ export function Leds() {
       buffers.timeColorFloats.fill(0);
     }
 
-    // Strike scheduler runs whenever lightning is enabled and in its
-    // active hour window — independent of view mode / pipeline stage —
-    // so Strikes/min and the 3D bolt viz keep working even when LEDs
-    // aren't taking the lightning contribution this frame.
-    const lightningActive =
-      lightning.enabled &&
-      hourInRange(
-        sky.timeHours,
-        lightning.activeStartHour,
-        lightning.activeEndHour,
-      );
+    // Lightning is on or off. It does not follow the sky clock.
+    const lightningActive = lightning.enabled;
     const hasActiveLightning =
       lightningCtrl.getStrikes().length > 0 ||
       lightningCtrl.getSprites().length > 0;
@@ -740,69 +764,32 @@ export function Leds() {
       // real minute), independent of sky play speed and of simFps.
       // simFps only throttles the LED contribution / strobe look.
       const now = performance.now();
-      const meshTiltRad = (meshTarget.tiltDeg * Math.PI) / 180;
-      const meshYawRad = (meshTarget.yawDeg * Math.PI) / 180;
-      const cloudXform = {
-        tiltRad: cloudTiltRad + meshTiltRad,
-        yawRad: cloudYawRad + meshYawRad,
-        offsetX: cloud.offsetX,
-        offsetY: cloud.offsetY + meshTarget.offsetY,
-        offsetZ: cloud.offsetZ,
+      // Sample in the cuboid's own axes. The matrix applies the same
+      // flip, mesh, and cloud chain as the arches, so the bolts stay
+      // inside the wireframe.
+      const boltEllipsoid = {
+        rx: Math.max(1e-3, lightning.volume.size[0] * 0.5),
+        ry: Math.max(1e-3, lightning.volume.size[1] * 0.5),
+        rz: Math.max(1e-3, lightning.volume.size[2] * 0.5),
       };
-      const half = meshHalfExtentsRef.current;
-      const meshEllipsoid = half
-        ? {
-            rx: Math.max(1e-3, half.hx * meshTarget.scale * 0.9),
-            ry: Math.max(1e-3, half.hy * meshTarget.scale * 0.9),
-            rz: Math.max(1e-3, half.hz * meshTarget.scale * 0.9),
-          }
-        : ellipsoid;
-      let boltEllipsoid = meshEllipsoid;
-      let boltXform = cloudXform;
-      let boltLightning = lightning;
-      if (archLightning) {
-        boltEllipsoid = archLightning.ellipsoid;
-        const shifted = rotateCloud(
-          archLightning.center,
-          cloudXform.tiltRad,
-          cloudXform.yawRad,
-        );
-        boltXform = {
-          ...cloudXform,
-          offsetX: cloudXform.offsetX + shifted[0],
-          offsetY: cloudXform.offsetY + shifted[1],
-          offsetZ: cloudXform.offsetZ + shifted[2],
-        };
-        boltLightning = {
-          ...lightning,
-          falloffDistance: lightning.falloffDistance * archLightning.fit,
-        };
-      }
-      const keyframeU = activeWindowProgress(
-        sky.timeHours,
-        lightning.activeStartHour,
-        lightning.activeEndHour,
-      );
-      const sampleBoltSurface =
-        archLightning || !meshTarget.id
-          ? undefined
-          : (): [number, number, number] | null => {
-              if (!sampleMeshSurfacePoint(meshTarget.id!, boltSurfacePoint)) {
-                return null;
-              }
-              return [
-                boltSurfacePoint.x * meshTarget.scale,
-                boltSurfacePoint.y * meshTarget.scale,
-                boltSurfacePoint.z * meshTarget.scale,
-              ];
-            };
+      const boltXform = {
+        tiltRad: 0,
+        yawRad: 0,
+        offsetX: 0,
+        offsetY: 0,
+        offsetZ: 0,
+        matrix: lightningVolumeMatrix,
+      };
+      const boltLightning = {
+        ...lightning,
+        falloffDistance: lightning.falloffDistance * lightningBox.fit,
+      };
       lightningCtrl.update(
         now,
         boltLightning,
         boltEllipsoid,
         boltXform,
-        keyframeU,
-        sampleBoltSurface,
+        0,
       );
       const useLightning =
         (lightningActive ||
@@ -854,7 +841,7 @@ export function Leds() {
       buffers.colorBytes[i3 + 2] = (b * 255 + 0.5) | 0;
     }
 
-    const locatorColor = hexToVec3(ledLocator.color);
+    const locatorColor = linearHex(ledLocator.color);
     for (let i = 0; i < buffers.n; i++) {
       const i3 = i * 3;
       if (
@@ -877,11 +864,7 @@ export function Leds() {
         buffers.colorFloats[i3 + 2],
         strand.colorProfile,
       );
-      tmpColor.setRGB(
-        srgbByteToLinear(red),
-        srgbByteToLinear(green),
-        srgbByteToLinear(blue),
-      );
+      tmpColor.setRGB(red / 255, green / 255, blue / 255);
       mesh.setColorAt(i, tmpColor);
     }
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;

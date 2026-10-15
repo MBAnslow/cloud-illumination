@@ -4,11 +4,11 @@ import { AdditiveBlending } from "three";
 import { Line } from "@react-three/drei";
 import {
   boltTravelHead,
-  peakIntensityRange,
   sharedLightningController,
   type BoltStrike,
 } from "../lighting/lightning";
-import { activeWindowProgress, useSimStore } from "../state";
+import { linearChannelToSrgbByte } from "../lighting/ledColor";
+import { useSimStore } from "../state";
 
 interface VisibleBolt {
   id: string;
@@ -21,9 +21,7 @@ interface VisibleBolt {
 
 function rgbToHex(r: number, g: number, b: number): string {
   const c = (v: number) =>
-    Math.max(0, Math.min(255, Math.round(v * 255)))
-      .toString(16)
-      .padStart(2, "0");
+    linearChannelToSrgbByte(v).toString(16).padStart(2, "0");
   return `#${c(r)}${c(g)}${c(b)}`;
 }
 
@@ -53,13 +51,12 @@ export function LightningBolts() {
     if (now - lastTickRef.current < 1000 / fps) return;
     lastTickRef.current = now;
     const strikes = sharedLightningController.getStrikes();
-    const keyframeU = activeWindowProgress(
-      useSimStore.getState().sky.timeHours,
-      lightning.activeStartHour,
-      lightning.activeEndHour,
+    const intensityMax = Math.max(
+      1,
+      lightning.intensityRange[0],
+      lightning.intensityRange[1],
+      0.001,
     );
-    const peak = peakIntensityRange(lightning.keyframes, keyframeU);
-    const intensityMax = Math.max(1, peak[1], 0.001);
     const next: VisibleBolt[] = [];
     for (const s of strikes) {
       const env = sharedLightningController.strikeEnvelope(s, now);

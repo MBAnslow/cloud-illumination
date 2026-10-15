@@ -135,6 +135,30 @@ export function spreadToSpotAngle(spread: number): number {
   return 0.08 + s * (Math.PI / 2 - 0.08);
 }
 
+/**
+ * Sun/moon beam half-angle aimed at a shape `shapeRadius` metres across,
+ * `distance` metres away.
+ *
+ * A fixed minimum angle of a few degrees is still a metre-wide patch at
+ * orbit distance, so the whole arch stays in the flat centre of the beam
+ * and the slider appears to do nothing. The footprint is sized to the
+ * shape instead: spread 0 is a small patch on it, spread 1 covers it
+ * with margin so the edges stay lit even with beam focus turned up.
+ */
+export function skySpreadToSpotAngle(
+  spread: number,
+  distance: number,
+  shapeRadius: number,
+): number {
+  const s = Math.max(0, Math.min(1, spread));
+  const dist = Math.max(1e-3, distance);
+  const radius = Math.max(1e-4, shapeRadius);
+  const narrow = radius * 0.15;
+  const wide = radius * 16;
+  const footprint = narrow * Math.pow(wide / narrow, s);
+  return Math.min(Math.atan(footprint / dist), Math.PI / 2 - 0.02);
+}
+
 export function pointLightDistanceAttenuation(
   distance: number,
   decay: number,
@@ -193,13 +217,9 @@ function clamp01(v: number) {
 }
 
 /**
- * Compress highlights while preserving hue/chroma.
- *
- * Per-channel clamping (`min(1, c)`) tends to bleach warm sunsets toward
- * white whenever multiple lights stack above 1.0. We instead normalize by
- * the brightest channel first (so RGB ratios stay intact), then apply a
- * gentle Reinhard roll-off. This keeps oranges/reds visibly saturated at
- * high brightness.
+ * Keep the shaded RGB ratio. A per-channel curve shifts a chosen swatch
+ * (orange suns pick up green and blue). Scale every channel together,
+ * and only when one of them would clip.
  */
 function toneMapPreserveHue(
   r: number,
@@ -208,15 +228,9 @@ function toneMapPreserveHue(
 ): [number, number, number] {
   const peak = Math.max(r, g, b);
   if (peak <= 0) return [0, 0, 0];
-  const scale = peak > 1 ? 1 / peak : 1;
-  const rn = r * scale;
-  const gn = g * scale;
-  const bn = b * scale;
-  const exposure = 1.35;
-  const rr = 1 - Math.exp(-rn * exposure);
-  const gg = 1 - Math.exp(-gn * exposure);
-  const bb = 1 - Math.exp(-bn * exposure);
-  return [clamp01(rr), clamp01(gg), clamp01(bb)];
+  if (peak <= 1) return [clamp01(r), clamp01(g), clamp01(b)];
+  const scale = 1 / peak;
+  return [r * scale, g * scale, b * scale];
 }
 
 /**
