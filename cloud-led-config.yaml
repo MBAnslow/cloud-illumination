@@ -33,9 +33,9 @@ strand:
   colorProfile:
     brightnessGamma: 1.3
 ambient:
-  color: "#262830"
-  intensity: 0.25
-  ducking: 0.75
+  color: "#ff0000"
+  intensity: 0
+  ducking: 1
 directional:
   color: "#ffffff"
   intensity: 1
@@ -46,23 +46,23 @@ directional:
   spread: 1
 sky:
   enabled: true
-  visualizationAmount: 1
+  visualizationAmount: 0.82
   autoPlay: false
-  timeHours: 19.504316570996714
+  timeHours: 19.855137311482494
   cycleSeconds: 180
-  ambientScale: 1
-  sunScale: 1
-  moonScale: 1
-  sunSpread: 1
-  moonSpread: 0.9
-  sunBeamFocus: 0.65
+  ambientScale: 3
+  sunScale: 2.93
+  moonScale: 0.44
+  sunSpread: 0.72
+  moonSpread: 0.82
+  sunBeamFocus: 1
   sunTopHighlightBoost: 0
-  moonBeamFocus: 0.65
+  moonBeamFocus: 1
   lightDecay: 1
-  showSpreadCones: false
+  showSpreadCones: true
   orbitRadius: 12
-  orbitRadiusX: 12
-  orbitRadiusY: 2.5
+  orbitRadiusX: 2.75
+  orbitRadiusY: 3.25
   orbitRadiusZ: 12
   sunHorizonStartDeg: -8
   sunHorizonFullDeg: 3
@@ -70,35 +70,35 @@ sky:
   moonHorizonFullDeg: 3
   sunStops:
     - id: sun-0-blueHour
-      timeHours: 4.5
+      timeHours: 5.376909605316828
       swatchId: blueHour
       color: "#463f75"
     - id: sun-1-azureTwilight
-      timeHours: 6
+      timeHours: 6.441988187420392
       swatchId: azureTwilight
       color: "#6f82ca"
     - id: sun-2-roseDawn
-      timeHours: 8.295417881093103
+      timeHours: 9.407646725892988
       swatchId: roseDawn
       color: "#f39d84"
     - id: sun-3-goldenPeach
-      timeHours: 9.579452421665534
+      timeHours: 10.75258585698901
       swatchId: goldenPeach
       color: "#f8c67d"
     - id: sun-4-noonSky
-      timeHours: 12
+      timeHours: 11.908073463585882
       swatchId: noonSky
       color: "#fff8ea"
     - id: sun-5-warmDay
-      timeHours: 13.660373494703217
+      timeHours: 12.823356609631563
       swatchId: warmDay
       color: "#ffe5be"
     - id: sun-6-emberSunset
-      timeHours: 15.5588656214845
+      timeHours: 14.909970853765547
       swatchId: emberSunset
       color: "#ef708a"
     - id: sun-7-crimsonSunset
-      timeHours: 16.768237908515044
+      timeHours: 16.855706628592124
       swatchId: custom
       color: "#ff3300"
     - id: sun-30vgqg-mv8f7g8t
@@ -110,9 +110,17 @@ sky:
       swatchId: custom
       color: "#000000"
     - id: sun-jsf1lj-mv8fdmnr
-      timeHours: 14.908357955381145
+      timeHours: 14.109476978677124
       swatchId: roseDawn
       color: "#f39d84"
+    - id: sun-449rl8-mv9po5lc
+      timeHours: 8.10160325968231
+      swatchId: roseDawn
+      color: "#f39d84"
+    - id: sun-93ohpn-mv9prhu7
+      timeHours: 15.771464038802947
+      swatchId: custom
+      color: "#ff7b00"
   moonStops:
     - id: moon-0-moonlitBlue
       timeHours: 0
@@ -139,7 +147,7 @@ sky:
       swatchId: blueHour
       color: "#aebfff"
     - id: moon-665f2e-mv8f754h
-      timeHours: 12.275021853839256
+      timeHours: 12.082534638460288
       swatchId: custom
       color: "#000000"
     - id: moon-158iz7-mv8f78jn
@@ -192,20 +200,14 @@ lightning:
     highlight1:
       - id: lcs-w0oznl
         t: 0
-        color: "#a8c8ff"
-      - id: lcs-bzifc5
-        t: 1
-        color: "#c4d9ff"
+        color: "#5794ff"
     highlight2:
       - id: lcs-o6bhtp
         t: 0
-        color: "#fff2c9"
-      - id: lcs-4xlihy
-        t: 1
-        color: "#fff6d6"
+        color: "#49fd76"
   intensityRange:
-    - 0.5
-    - 2.45
+    - 2.5300000000000002
+    - 3
   keyframes:
     - id: kf-0
       t: 0.14
@@ -225,6 +227,26 @@ lightning:
         boltGain: 0.6
         spriteGain: 1.2
         backgroundGain: 0.25
+        thunderDelayMs: 800
+        pan: 0
+    - id: kf-1z3abp
+      t: 0.35320989504541184
+      values:
+        intensityRange:
+          - 0.6740488939146219
+          - 2.036633876952773
+        strikesPerMinute: 4.610733408719328
+        strikePerMinute: 0.6045855643505883
+        spritesPerMinute: 1.152683352179832
+        spriteStrobeDutyRange:
+          - 0.2564877765213445
+          - 0.5782438882606723
+        subFlashes: 0.31526833521798325
+        spanScale: 0.7652683352179832
+        minSpanScale: 0.4435122234786555
+        boltGain: 0.687024446957311
+        spriteGain: 1.374048893914622
+        backgroundGain: 0.29351222347865547
         thunderDelayMs: 800
         pan: 0
     - id: kf-1
@@ -267,20 +289,30 @@ lightning:
         backgroundGain: 0.25
         thunderDelayMs: 800
         pan: 0
-  strikesPerMinute: 2
+  strikesPerMinute: 24
   strikePerMinute: 0.3
   spritesPerMinute: 0.5
-  falloffDistance: 0.19453942669774885
+  falloffDistance: 0.12121212121212122
   boltSegments: 10
   boltJitterRange:
     - 0.25
-    - 0.55
+    - 0.7000000000000001
   travelSpeedRange:
-    - 0.1
-    - 0.6
-  subFlashes: 0.25
-  spanScale: 0.7
-  minSpanScale: 0.4
+    - 0.4
+    - 0.8
+  subFlashes: 0
+  spanScale: 1
+  minSpanScale: 0.6900000000000001
+  volume:
+    size:
+      - 0.146
+      - 0.225
+      - 0.124
+    center:
+      - -0.001
+      - -0.084
+      - -0.002
+    visible: true
   activeStartHour: 17.84872587471541
   activeEndHour: 4
   boltSamples: []
@@ -320,13 +352,8 @@ dayCycle:
     - id: night
       name: Night
       startHour: 20
-      endHour: 0
-      color: "#6366f1"
-    - id: magicalNight
-      name: Magical night
-      startHour: 0
       endHour: 5
-      color: "#c084fc"
+      color: "#6366f1"
   activePeriodId: dawn
   autoNext: false
 ledDisplayMode: leds
@@ -5470,13 +5497,13 @@ mapping:
       normal: *a512
       offset: 0
   mode: ellipsoid
-  tool: offset
-  flipUpDown: true
+  tool: gaussian
+  flipUpDown: false
   flipLeftRight: false
   reversed: false
   ledSize: 0.002
   maxSegmentLength: 0.05
-  showBumpSurfaces: false
+  showBumpSurfaces: true
   showBallSensors: true
   bumpLightOpacity: 1
   pyramidLightOpacity: 1
@@ -5487,24 +5514,141 @@ mapping:
   useBakedSurface: false
   bakedSurfaceSignature: null
   bakeSurfaceRequestNonce: 0
-  mappingLightAngleDeg: 0
-  mappingLightElevationDeg: 45
+  mappingLightAngleDeg: 360
+  mappingLightElevationDeg: 143
   mappingLightRadius: 0.25
-  mappingLightIntensity: 0.1
+  mappingLightIntensity: 0.8
   mappingLightSpread: 0.9
   mappingLightFocus: 1
   mappingLightDecay: 1
   mappingLightColor: "#fff3d0"
-  gaussians: []
+  gaussians:
+    - id: gaussian-7d5qhi-mv9ql39n
+      pos:
+        - 0.0007949013399635857
+        - -0.08511902513430472
+        - 0.04933803156018235
+      normal:
+        - 0
+        - 6.123234262925839e-17
+        - 1
+      amplitude: 0.02
+      width: 0.013794340278131506
+      height: 0.01970620039733072
+      rotationDeg: 0
+    - id: gaussian-itsmqo-mv9qlguz
+      pos:
+        - -0.0014504694759317274
+        - -0.03541426399266043
+        - 0.04760455378018302
+      normal:
+        - 0
+        - 0.2619984206706558
+        - 0.9650683020211999
+      amplitude: 0.02
+      width: 0.013794340278131506
+      height: 0.017735580357597647
+      rotationDeg: 0
+    - id: gaussian-v4q0xr-mv9qmeru
+      pos:
+        - 0.00021692141863249859
+        - -0.08157305910036554
+        - -0.04933803156018257
+      normal:
+        - 0
+        - 6.123234262925839e-17
+        - -1
+      amplitude: 0.015
+      width: 0.015764960317864576
+      height: 0.01970620039733072
+      rotationDeg: 0
+    - id: gaussian-tehh8a-mv9qmtub
+      pos:
+        - 0.0022212801135515006
+        - -0.02355593809134582
+        - -0.04265243224593418
+      normal:
+        - 0
+        - 0.5023805692052086
+        - -0.8646466120242713
+      amplitude: 0.015
+      width: 0.011823720238398432
+      height: 0.017735580357597647
+      rotationDeg: 0
+    - id: gaussian-11vlie-mv9qnibu
+      pos:
+        - 0.04933803156018257
+        - -0.07494482234014649
+        - -0.0018856942184848346
+      normal:
+        - 1
+        - -6.123234262925839e-17
+        - 0
+      amplitude: 0.025
+      width: 0.015764960317864576
+      height: 0.02167682043706379
+      rotationDeg: 0
+    - id: gaussian-8598a2-mv9qo70w
+      pos:
+        - -0.04933803156018257
+        - -0.07314210369592145
+        - -0.00027969997214069564
+      normal:
+        - -1
+        - -6.123234262925839e-17
+        - 0
+      amplitude: 0.025
+      width: 0.013794340278131506
+      height: 0.01970620039733072
+      rotationDeg: 0
+    - id: gaussian-fbay02-mv9qonm0
+      pos:
+        - -0.03777426828061037
+        - -0.13909525507196407
+        - -0.0005145128455501385
+      normal:
+        - -0.7670545921466154
+        - -0.6415818362974357
+        - 0
+      amplitude: 0.02
+      width: 0.013794340278131506
+      height: 0.017735580357597647
+      rotationDeg: 0
+    - id: gaussian-i9cppp-mv9qp2qe
+      pos:
+        - 0.022064848106313817
+        - -0.15151222633415684
+        - -0.0034918230154571545
+      normal:
+        - 0.44816776715659684
+        - -0.8939494686400739
+        - 0
+      amplitude: 0.02
+      width: 0.011823720238398432
+      height: 0.015764960317864576
+      rotationDeg: 0
+    - id: gaussian-ym91yl-mv9qpdkk
+      pos:
+        - 0.0025745936997357832
+        - 0.0009113702720437988
+        - -0.0013522290264335046
+      normal:
+        - 0
+        - 0.9996232762128568
+        - -0.027446414218888125
+      amplitude: 0.01
+      width: 0.011823720238398432
+      height: 0.013794340278131506
+      rotationDeg: 0
 mesh:
   id: null
   name: ""
   scale: 1
-  yawDeg: 1
+  yawDeg: -180
   tiltDeg: 90
-  offsetY: -0.01
+  offsetY: -0.02
 ui:
   showLightning: true
-  showTimeOfDay: false
+  showTimeOfDay: true
   showCloud: true
   showStream: true
