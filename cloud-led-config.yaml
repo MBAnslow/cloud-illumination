@@ -206,7 +206,7 @@ lightning:
         t: 0
         color: "#49fd76"
   intensityRange:
-    - 1.11
+    - 2.5300000000000002
     - 3
   keyframes:
     - id: kf-0
@@ -289,10 +289,10 @@ lightning:
         backgroundGain: 0.25
         thunderDelayMs: 800
         pan: 0
-  strikesPerMinute: 15
+  strikesPerMinute: 24
   strikePerMinute: 0.3
   spritesPerMinute: 0.5
-  falloffDistance: 0.0650759219088937
+  falloffDistance: 0.12121212121212122
   boltSegments: 10
   boltJitterRange:
     - 0.25
@@ -305,9 +305,9 @@ lightning:
   minSpanScale: 0.6900000000000001
   volume:
     size:
-      - 0.129
-      - 0.193
-      - 0.139
+      - 0.146
+      - 0.225
+      - 0.124
     center:
       - -0.001
       - -0.084
