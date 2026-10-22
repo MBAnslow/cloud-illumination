@@ -29,7 +29,8 @@ E131_SOURCE.write("cloud-illumination");
 /**
  * One E1.31 universe. `slots` is the RGB bytes for this universe only
  * (no start code). WLED reads channel 1 from the byte after the start code,
- * 170 LEDs per universe in Multiple RGB mode.
+ * 170 LEDs per universe in Multiple RGB mode. The controller maps the
+ * buffer in order: LEDs 0–255 to GPIO 16, LEDs 256–511 to GPIO 2.
  */
 function encodeE131(universe: number, slots: Buffer, seq: number): Buffer {
   const values = Buffer.concat([Buffer.from([0]), slots]);

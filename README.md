@@ -25,7 +25,7 @@ browser app ──WebSocket──▶ relay ──E1.31/UDP──▶ WLED
   owns the sun / moon / ambient colour stops and the lightning window.
 - **LED mapping** (`#/mapping`) uploads the cloud mesh (`.glb` / `.gltf`)
   and shapes it with Gaussian domes ("bumps"). The strand defaults to two
-  separate 32×8 panels (512 LEDs), bent into arches with the feet
+  32×8 matrices (256 LEDs each): GPIO 16, then GPIO 2. They are bent into arches with the feet
   drawn in, one hanging down and the other flipped up so the crowns
   cross. Manual
   placement is still in the layout menu.

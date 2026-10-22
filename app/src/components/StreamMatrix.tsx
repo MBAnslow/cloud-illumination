@@ -59,7 +59,7 @@ function StreamMatrixInner() {
       const H = canvas.height;
       ctx.clearRect(0, 0, W, H);
 
-      // Two 32×8 panels, same column-zigzag chain the LEDs are wired in.
+      // Two 32×8 outputs (GPIO 16, then GPIO 2), each column-zigzag from its own start.
       // Any other count falls back to a near-square grid.
       const matrix = n === 256 || n === 512;
       const cols = matrix ? 32 : Math.max(1, Math.ceil(Math.sqrt(n)));

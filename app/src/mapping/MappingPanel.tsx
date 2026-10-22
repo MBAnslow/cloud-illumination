@@ -13,7 +13,11 @@ import { clearBakedSurfaceGeometry } from "./bakedSurface";
 import { mappingBakeSignature } from "./bakeSignature";
 import { deleteMeshBlob, invalidateMeshGeometry, putMeshBlob } from "./meshAsset";
 import { confirmDestructiveClear } from "../components/confirmDestructiveClear";
-import { DUAL_32X8_SLOTTED, type LedLayoutId } from "./ledLayout";
+import {
+  DUAL_32X8_SLOTTED,
+  MATRIX_OUTPUT_GPIO,
+  type LedLayoutId,
+} from "./ledLayout";
 import { ColorInput } from "../components/ColorInput";
 
 interface Props {
@@ -322,7 +326,7 @@ export function MappingPanel({
             }}
           >
             <option value={DUAL_32X8_SLOTTED}>
-              2 × 32×8 crossed arches (512)
+              {`2 × 32×8 matrices, GPIO ${MATRIX_OUTPUT_GPIO[0]} then GPIO ${MATRIX_OUTPUT_GPIO[1]} (512)`}
             </option>
             <option value="manual">Manual placement</option>
           </select>

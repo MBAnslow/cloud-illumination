@@ -9,10 +9,14 @@ import {
 import type { MappedLed, Vec3 } from "../state";
 
 /**
- * Two 32×8 panels on one 512-LED chain. Each panel is a semicircular
+ * Two 32×8 matrices on two WLED outputs. Each panel is a semicircular
  * arch with straight sides leaving the curve. The second arch is flipped
  * the other way up, turned a quarter turn, and lowered by the height of
  * the first so the four sides stand like the walls of a house.
+ *
+ * Output 0 is GPIO 16 and receives LEDs 0–255. Output 1 is GPIO 2 and
+ * receives LEDs 256–511. Each output is its own chain and starts at
+ * column 0 of that matrix.
  *
  * Normals point out of each arch, so the sensor hemispheres sit on the
  * outside. A thin strip on the inside blocks light.
@@ -117,6 +121,8 @@ export type LedLayoutId = typeof DUAL_32X8_SLOTTED | "manual";
 const COLS = 32;
 const ROWS = 8;
 const PER_PANEL = COLS * ROWS;
+/** WLED output pins, in LED-index order. Output 0 is the first matrix. */
+export const MATRIX_OUTPUT_GPIO = [16, 2] as const;
 /** Rounded crown only. The sides continue straight from its ends. */
 const ARCH_CURVE = Math.PI;
 /** Share of the strip length in each straight side. */
@@ -229,9 +235,10 @@ function archPose(
 }
 
 /**
- * Electrical index on the 512-LED chain, in the panel's own matrix.
- * `col` runs along the arch (0..31). `row` runs across the 8-pixel width.
- * Even columns step row 0→7, odd columns step back.
+ * Electrical index within the two WLED outputs. LEDs 0–255 are the GPIO 16
+ * matrix and 256–511 are the GPIO 2 matrix. `col` runs along the arch
+ * (0..31). `row` runs across the 8-pixel width. Even columns step row 0→7,
+ * odd columns step back. Both outputs start at column 0.
  */
 export function dual32x8Cell(
   index: number,
@@ -254,8 +261,7 @@ export function buildDual32x8Slotted(
   const leds: MappedLed[] = [];
   for (let index = 0; index < PER_PANEL * 2; index++) {
     const cell = dual32x8Cell(index)!;
-    // The second panel's chain starts at the other end of its arch.
-    const col = cell.panel === 1 ? COLS - 1 - cell.col : cell.col;
+    const col = cell.col;
     const s = (col / (COLS - 1)) * metrics.length;
     const across = (cell.row - (ROWS - 1) / 2) * ledPitch;
     const { pos, normal } = archPose(cell.panel, s, across, metrics, placements);
